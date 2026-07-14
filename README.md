@@ -2,7 +2,7 @@
 Repository detailing how we integrated a UR5e robotic arm with a Robotiq hand-E gripper and OpenVLA.
 
 # Overview  
-OpenVLA is an open source vision language action (VLA) model that receives a plain language prompt and a single RGB image and ouputs a 7D vector to control the robot arm. For more infomration, go to [OpenVLA](https://openvla.github.io/). This repository specifically deals with the integration of OpenVLA with a UR5e robotic arm attached with a Robotiq Hand-E gripper. For more general information, see [OpenVLA github](https://github.com/openvla/openvla). [CAPABILITIES OF OUR MODEL HERE]. 
+OpenVLA is an open source vision language action (VLA) model that receives a plain language prompt and a single RGB image and ouputs a 7D vector to control the robot arm. For more information, go to [OpenVLA](https://openvla.github.io/). This repository specifically deals with the integration of OpenVLA with a UR5e robotic arm attached with a Robotiq Hand-E gripper. For more general information, see [OpenVLA github](https://github.com/openvla/openvla). [CAPABILITIES OF OUR MODEL HERE]. 
 
 # Background  
 OpenVLA relies on a 7B parameter agent pretrained on data from labs across the world. Still, it will struggle in most setups without fine-tuning as unique environments, such as the one in the lab this project was created in, are extremely out-of-distribution. Additionally, only about 1% of OpenVLA's pretraining comes from UR5 datasets. This section will outline performance metrics with and without fine-tuning and compare them to the performance of OpenVLA in its original [paper](https://arxiv.org/abs/2406.09246).
