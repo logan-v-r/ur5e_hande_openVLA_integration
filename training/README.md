@@ -1,2 +1,3 @@
-The file in this subdirectory is a slightly modified version of fintune.py found in the official OpenVLA repo. The 
-changes made were done to meet our specific hardware constraints.
+This subdirectory contains files used in the process of finetuning OpenVLA for our own setup. The files range from
+episode generation/cleaning to our finetune script, which is a slightly personalized version of OpenVLA's finetune
+script.
