@@ -1,61 +1,60 @@
 # Data Processing
 
-This directory contains the script used to clean and validate raw robot demonstration episodes before converting them into the custom RLDS dataset.
+This directory contains the script used to clean raw UR5e demonstration episodes before TFDS/RLDS conversion.
 
 ## Contents
 
-| File                    | Purpose                                                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------ |
-| `clean_raw_episodes.py` | Processes raw demonstration episodes and creates cleaned copies suitable for dataset conversion. |
+| File                    | Purpose                                                                                         |
+| ----------------------- | ----------------------------------------------------------------------------------------------- |
+| `clean_raw_episodes.py` | Applies automated quality checks and creates cleaned copies of retained demonstration episodes. |
 
 ## How It Works
 
-`clean_raw_episodes.py` is run after demonstration collection is complete and poor or unsuccessful demonstrations have been manually removed.
+`clean_raw_episodes.py` is run after unsuccessful or inaccurate demonstrations have been removed through manual review.
 
-The script reviews each retained episode and:
+The script:
 
-* Rejects incomplete or invalid episodes
-* Removes steps with missing or unusable data
-* Removes long periods of little or no robot movement
-* Preserves context around meaningful movement and gripper actions
-* Recalculates actions between the retained robot poses
-* Copies only the images associated with retained steps
-* Reindexes the cleaned steps and image files
-* Generates a manifest describing the cleaning results
+* Skips incomplete episodes by default
+* Removes steps with invalid camera, TCP, safety, image, or timing data
+* Removes long stretches of little or no arm movement
+* Treats gripper changes as meaningful actions when gripper data is available
+* Preserves a small amount of idle context around meaningful actions
+* Recalculates actions between retained UR5e poses
+* Reindexes retained steps and images
+* Adds a terminal action to the final retained observation by default
+* Writes a cleaning summary to `cleaning_manifest.jsonl`
 
-The original raw episodes are not modified. Cleaned episodes are written to a separate output directory.
-
-## Processing Workflow
-
-```text
-Raw demonstration episodes
-            ↓
- Manual review and removal
-   of unsuccessful episodes
-            ↓
-  `clean_raw_episodes.py`
-            ↓
- Cleaned demonstration episodes
-            ↓
-   TFDS/RLDS dataset conversion
-            ↓
-      OpenVLA fine-tuning
-```
+The original raw episodes are not modified. Cleaned episodes are written to a separate output directory and marked as `cleaned_unreviewed`.
 
 ## Input and Output
 
-The script expects a directory containing raw demonstration episodes produced by [`collect_data_gripper.py`](../data_collection/collect_data_gripper.py).
+The expected input is the raw episode structure produced by [`collect_data_gripper.py`](../data_collection/collect_data_gripper.py):
 
-Each cleaned episode retains the data required for later RLDS conversion, including:
+```text
+episode_.../
+├── episode_metadata.json
+├── steps.jsonl
+├── images/
+└── COMPLETE.json
+```
 
-* RGB camera images
-* Robot poses
-* Translation and rotation actions
-* Gripper information
-* Language instructions
-* Timing and episode metadata
+The cleaned output preserves the same episode-level structure and also adds cleaning information to the metadata. The output root contains a `cleaning_manifest.jsonl` file summarizing which episodes were cleaned, skipped, or encountered errors.
 
-Raw and cleaned datasets are not committed to this repository because of their size.
+## Workflow
+
+```text
+Raw episodes from `collect_data_gripper.py`
+                  ↓
+       Manual task-success review
+                  ↓
+        `clean_raw_episodes.py`
+                  ↓
+         Cleaned episode folders
+                  ↓
+          TFDS/RLDS conversion
+```
+
+The generated datasets and episode images are not committed to this repository because of their size.
 
 ## Validation
 
