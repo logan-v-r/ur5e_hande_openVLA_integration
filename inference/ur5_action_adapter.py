@@ -1,235 +1,272 @@
 '''
-import numpy as np
+Convert processed OpenVLA actions into UR5e target commands.
 
-MAX_STEP_METERS = 0.01  # Start with 1 cm per axis.
+This module sits between model inference and physical robot execution.
+It does not connect to or command the UR5e or Robotiq Hand-E gripper.
 
+For the custom fine-tuned `ur5e_openvla` model, the processed action is
+expected to contain:
 
-def openvla_to_ur5_target(current_tcp_pose, openvla_action):
-    """
-    Convert OpenVLA XYZ output into a conservative UR5 TCP target.
+    world_vector:
+        Relative Cartesian translation [dx, dy, dz] expressed in the
+        UR5e base frame, in metres.
 
-    Uses translation only.
-    Keeps the current UR5 orientation unchanged.
-    """
+    rot_axangle:
+        Relative orientation change [drx, dry, drz] expressed as a
+        base-frame rotation vector. The vector direction defines the
+        rotation axis and its magnitude defines the angle in radians.
 
-    world_vector = np.asarray(
-        openvla_action["world_vector"],
-        dtype=float,
-    )
+    gripper:
+        Processed scalar gripper command.
 
-    if world_vector.shape != (3,):
-        raise ValueError("world_vector must contain [dx, dy, dz].")
+The translation and rotation conventions must remain consistent with
+`clean_raw_episodes.py` and the custom RLDS dataset builder.
 
-    # Preserve OpenVLA's small physical delta values,
-    # but hard-cap each axis for the real robot.
-    safe_delta = np.clip(
-        world_vector,
-        -MAX_STEP_METERS,
-        MAX_STEP_METERS,
-    )
+The target orientation is reconstructed as:
 
-    target_tcp = list(current_tcp_pose)
+    target_rotation = delta_rotation * current_rotation
 
-    target_tcp[0] += float(safe_delta[0])
-    target_tcp[1] += float(safe_delta[1])
-    target_tcp[2] += float(safe_delta[2])
+This is the inverse of the dataset-cleaning calculation:
 
-    # Leave [rx, ry, rz] unchanged for early tests.
-    return target_tcp
+    delta_rotation = target_rotation * inverse(current_rotation)
+
+The adapter limits each predicted action before returning:
+
+    - a six-element UR5e TCP target pose; and
+    - a high-level gripper command: "open", "close", or None.
+
+Workspace checks, inverse kinematics, hardware communication, and motion
+execution are handled by `openvla_move_with_liveview.py`.
 '''
 
-from __future__ import annotations
+from typing import Any, Mapping, Sequence
 
-import robotiq_gripper
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 
 # ---------------------------------------------------------------------------
-# Conservative early-stage limits
+# Per-action limits and feature controls
 # ---------------------------------------------------------------------------
 
-# Maximum movement per Cartesian axis for one OpenVLA action.
-MAX_TRANSLATION_METERS = 0.0254  # 2.54 cm = 1 in
+# Maximum absolute translation allowed along each base-frame Cartesian
+# axis for one predicted action. Units are metres.
+MAX_TRANSLATION_METERS = 0.0254  # 2.54 cm, or 1 inch, per axis.
 
-# Maximum total orientation change for one OpenVLA action.
-# 0.1 radians is about 5.7 degrees.
-MAX_ROTATION_RADIANS = 3.1415  # 90 degrees
+# Maximum magnitude of the complete rotation delta for one predicted
+# action. This limits the norm of the rotation vector, not each component
+# independently. Units are radians.
+MAX_ROTATION_RADIANS = 0.1  # Approximately 5.7 degrees.
 
-# Keep False until translation-only tests are predictable and safe.
+# When False, preserve the current UR5e orientation and ignore the
+# predicted rotation delta.
 USE_ROTATION = True
 
-# OpenVLA rotation deltas are interpreted as tool-relative for this first
-# implementation. See notes below before changing this.
-ROTATION_FRAME = "tool"
+# Optional component mask applied to the base-frame rotation vector.
+# Keep all axes enabled for normal operation.
+ROTATION_AXIS_MASK = np.array([1.0, 1.0, 1.0], dtype=np.float64)
 
-# Keep False until the gripper has been tested independently.
+# When False, openvla_to_gripper_command() returns None.
 USE_GRIPPER = True
 
-# The OpenVLA wrapper is expected to provide a scalar gripper signal.
-# This mapping assumes:
-#   >= 0 means open
-#   < 0 means close
-#
-# Verify this with a one-command physical test before enabling USE_GRIPPER.
+# Processed gripper convention currently used by the inference wrapper:
+#   value >= 0.0 -> open
+#   value <  0.0 -> close
 GRIPPER_OPEN_THRESHOLD = 0.0
 
+# ---------------------------------------------------------------------------
+# Rotation helper functions
+# ---------------------------------------------------------------------------
+
+def _require_vector(
+    action: Mapping[str, Any],
+    key: str,
+    expected_size: int,
+) -> np.ndarray:
+    """
+    Read and validate a finite one-dimensional action vector.
+    """
+    if key not in action:
+        raise KeyError(f"OpenVLA action does not contain {key!r}.")
+
+    value = np.asarray(action[key], dtype=np.float64).reshape(-1)
+
+    if value.size != expected_size:
+        raise ValueError(
+            f"OpenVLA action {key!r} must contain {expected_size} values, "
+            f"got shape {np.asarray(action[key]).shape}."
+        )
+
+    if not np.all(np.isfinite(value)):
+        raise ValueError(
+            f"OpenVLA action {key!r} contains non-finite values: {value}."
+        )
+
+    return value
+
+def _limit_vector_norm(
+    vector: np.ndarray,
+    max_norm: float,
+) -> np.ndarray:
+    """
+    Return a copy of a vector whose magnitude does not exceed max_norm.
+    """
+    if max_norm < 0:
+        raise ValueError("max_norm must be non-negative.")
+
+    norm = float(np.linalg.norm(vector))
+
+    if norm == 0.0 or norm <= max_norm:
+        return vector.copy()
+
+    return vector * (max_norm / norm)
+
+# ---------------------------------------------------------------------------
+# Convert Actions
+# ---------------------------------------------------------------------------
 
 def openvla_to_ur5_target(
-    current_tcp_pose: list[float],
-    openvla_action: dict[str, np.ndarray],
+    current_tcp_pose: Sequence[float],
+    openvla_action: Mapping[str, Any],
 ) -> list[float]:
     """
-    Convert an OpenVLA action into a conservative UR5 TCP target pose.
+    Convert one processed fine-tuned OpenVLA action into a UR5e TCP target.
 
-    Inputs:
+    Args:
         current_tcp_pose:
-            [x, y, z, rx, ry, rz] from rtde_r.getActualTCPPose()
+            Current UR5e TCP pose from `getActualTCPPose()`, represented
+            as [x, y, z, rx, ry, rz]. Position is expressed in metres.
+            Orientation is a UR rotation vector expressed in radians.
 
         openvla_action:
-            {
-                "world_vector": [dx, dy, dz],
-                "rot_axangle": [drx, dry, drz],
-                ...
-            }
+            Processed action containing:
+                world_vector:
+                    Base-frame relative XYZ translation in metres.
+                rot_axangle:
+                    Base-frame relative rotation vector in radians.
 
-    Behavior:
-        - clamps XYZ translation;
-        - optionally clamps and composes rotation;
-        - leaves orientation unchanged while USE_ROTATION is False;
-        - does not command the gripper.
+    Returns:
+        A six-element target TCP pose:
+            [x, y, z, rx, ry, rz]
+
+    Notes:
+        - Translation is limited per Cartesian axis.
+        - Rotation is limited by the total rotation-vector magnitude.
+        - The rotation delta is left-composed because the fine-tuning
+          dataset stores base-frame rotation deltas:
+
+              target = delta * current
+
+        - This function does not perform workspace, safety, or inverse-
+          kinematics checks and does not command the robot.
     """
+    current_tcp = np.asarray(current_tcp_pose, dtype=np.float64).reshape(-1)
 
-    current_tcp = np.asarray(current_tcp_pose, dtype=float)
-
-    if current_tcp.shape != (6,):
+    if current_tcp.size != 6:
         raise ValueError(
-            "current_tcp_pose must contain [x, y, z, rx, ry, rz]."
+            "current_tcp_pose must contain six values "
+            "[x, y, z, rx, ry, rz], "
+            f"got {current_tcp.size}."
         )
 
-    world_vector = np.asarray(
-        openvla_action["world_vector"],
-        dtype=float,
+    if not np.all(np.isfinite(current_tcp)):
+        raise ValueError(
+            f"current_tcp_pose contains non-finite values: {current_tcp}."
+        )
+
+    translation_delta = _require_vector(
+        openvla_action,
+        "world_vector",
+        3,
     )
-
-    rot_axangle = np.asarray(
-        openvla_action["rot_axangle"],
-        dtype=float,
-    )
-
-    if world_vector.shape != (3,):
-        raise ValueError(
-            "OpenVLA world_vector must contain exactly [dx, dy, dz]."
-        )
-
-    if rot_axangle.shape != (3,):
-        raise ValueError(
-            "OpenVLA rot_axangle must contain exactly [drx, dry, drz]."
-        )
-
-    # -----------------------------------------------------------------------
-    # Translation
-    # -----------------------------------------------------------------------
 
     safe_translation = np.clip(
-        world_vector,
+        translation_delta,
         -MAX_TRANSLATION_METERS,
         MAX_TRANSLATION_METERS,
     )
 
     target_tcp = current_tcp.copy()
-    target_tcp[:3] += safe_translation
-
-    # -----------------------------------------------------------------------
-    # Rotation
-    # -----------------------------------------------------------------------
+    target_tcp[:3] = current_tcp[:3] + safe_translation
 
     if not USE_ROTATION:
-        # Preserve the current UR5 tool orientation.
         return target_tcp.tolist()
 
-    
-    safe_rotation = np.clip(
-        rot_axangle,
-        -MAX_ROTATION_RADIANS,
+    rotation_delta = _require_vector(
+        openvla_action,
+        "rot_axangle",
+        3,
+    )
+
+    masked_rotation_delta = rotation_delta * ROTATION_AXIS_MASK
+
+    safe_rotation_delta = _limit_vector_norm(
+        masked_rotation_delta,
         MAX_ROTATION_RADIANS,
     )
 
-    ROTATION_AXIS_MASK = np.array([1.0, 1.0, 1.0])
-    safe_rotation *= ROTATION_AXIS_MASK
-    
-    target_tcp[3:] += safe_rotation
-    
-    '''
-    # Limit the TOTAL magnitude of the rotation, not each component
-    # independently. This preserves the intended rotation axis.
-    rotation_magnitude = np.linalg.norm(rot_axangle)
+    current_rotation = Rotation.from_rotvec(current_tcp[3:6])
+    delta_rotation = Rotation.from_rotvec(safe_rotation_delta)
 
-    if rotation_magnitude > MAX_ROTATION_RADIANS:
-        safe_rot_delta = (
-            rot_axangle / rotation_magnitude
-        ) * MAX_ROTATION_RADIANS
-    else:
-        safe_rot_delta = rot_axangle
-    
-    # Optional: temporarily suppress a problematic model rotation axis.
-    # Start with all axes enabled. Set an axis to 0.0 only after testing.
-    ROTATION_AXIS_MASK = np.array([1.0, 1.0, 1.0])
+    # The custom dataset stores:
+    #
+    #     delta = next * inverse(current)
+    #
+    # Therefore reconstruct the target with:
+    #
+    #     next = delta * current
+    target_rotation = delta_rotation * current_rotation
 
-    safe_rot_delta *= ROTATION_AXIS_MASK
+    target_tcp[3:6] = target_rotation.as_rotvec()
 
-    print("Raw OpenVLA rotation:", rot_axangle)
-    print("Clamped OpenVLA rotation:", safe_rot_delta)
-    print("Rotation frame:", ROTATION_FRAME)
-
-    current_rotation = Rotation.from_rotvec(current_tcp[3:])
-    delta_rotation = Rotation.from_rotvec(safe_rot_delta)
-
-    if ROTATION_FRAME == "tool":
-        # Apply OpenVLA's rotation in the current tool frame.
-        target_rotation = current_rotation * delta_rotation
-
-    elif ROTATION_FRAME == "base":
-        # Apply OpenVLA's rotation in the UR base frame.
-        target_rotation = delta_rotation * current_rotation
-
-    else:
-        raise ValueError(
-            "ROTATION_FRAME must be either 'tool' or 'base'."
-        )
-
-    target_tcp[3:] = target_rotation.as_rotvec()
-    '''
-    
     return target_tcp.tolist()
 
 def openvla_to_gripper_command(
-    openvla_action: dict,
+    openvla_action: Mapping[str, Any],
 ) -> str | None:
     """
-    Translate OpenVLA's processed gripper output into a high-level command.
+    Map OpenVLA's processed gripper output to a high-level command.
 
     Returns:
-        "open"
-        "close"
-        None, when gripper control is disabled.
+        "open":
+            When gripper control is enabled and the processed value is
+            greater than or equal to GRIPPER_OPEN_THRESHOLD.
 
-    This function deliberately does not connect to or command hardware.
+        "close":
+            When gripper control is enabled and the processed value is
+            below GRIPPER_OPEN_THRESHOLD.
+
+        None:
+            When gripper control is disabled.
+
+    This function only interprets the model output. Gripper communication
+    and physical execution are handled by
+    `openvla_move_with_liveview.py`.
     """
-
     if not USE_GRIPPER:
         return None
 
-    if "gripper" not in openvla_action:
-        raise KeyError(
-            "OpenVLA action does not contain a 'gripper' value."
-        )
-
-    gripper_value = float(
-        np.asarray(openvla_action["gripper"]).reshape(-1)[0]
-    )
+    gripper_value = _require_vector(
+        openvla_action,
+        "gripper",
+        1,
+    )[0]
 
     if gripper_value >= GRIPPER_OPEN_THRESHOLD:
         return "open"
 
     return "close"
+
+# ---------------------------------------------------------------------------
+# Diagnostic helper
+# ---------------------------------------------------------------------------
+
+def describe_action_limits(
+    original: np.ndarray,
+    limited: np.ndarray,
+) -> str:
+    """Return a concise description when an action was limited."""
+    return (
+        f"raw={np.array2string(original, precision=5)}, "
+        f"limited={np.array2string(limited, precision=5)}"
+    )
