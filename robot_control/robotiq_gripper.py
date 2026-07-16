@@ -143,6 +143,7 @@ class RobotiqGripper:
     def activate(self, auto_calibrate: bool = True):
         """Resets the activation flag in the gripper, and sets it back to one, clearing previous fault flags.
         :param auto_calibrate: Whether to calibrate the minimum and maximum positions based on actual motion.
+        
         The following code is executed in the corresponding script function
         def rq_activate(gripper_socket="1"):
             if (not rq_is_gripper_activated(gripper_socket)):
