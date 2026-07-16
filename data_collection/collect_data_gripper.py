@@ -6,9 +6,9 @@ Read-only 5 Hz UR5e + RealSense recorder for OpenVLA dataset collection.
 
 Run this in a SECOND terminal while your 125 Hz mirror script controls the UR5e.
 This script never creates a control or I/O interface and never commands the robot
-or gripper.
+or gripper to avoid contention issues.
 
-Output is intentionally RAW, not RLDS. A later cleanup/conversion script can:
+Output is intentionally RAW, not RLDS. A later cleanup/conversion script (look at data_processing/) can:
   * drop stale/missing camera records
   * remove near-zero actions
   * reject unsafe or incomplete recordings
@@ -110,7 +110,7 @@ def get_bit(bitfield: Optional[int], bit_index: Optional[int]) -> Optional[int]:
 
 
 def read_gripper_status_file(status_file: Optional[Path]) -> Optional[dict[str, Any]]:
-    """Read the most recent keyboard-gripper command written by mirror_relative.py.
+    """Read the most recent keyboard-gripper command written by mirror_relative_keyboard.py.
 
     The mirror writes this small JSON file atomically. Reading it avoids opening
     a second socket connection to the Robotiq gripper from the data recorder.
@@ -157,7 +157,7 @@ def intrinsics_dict(intrinsics: Any) -> dict[str, Any]:
 # -----------------------------------------------------------------------------
 @dataclass
 class Config:
-    """Configuration values for one read-only recording session."""
+    """Configuration values for one read-only recording session. Ensure these values match YOUR specific setup."""
     follower_ip: str
     output_root: Path
     instruction: str
@@ -386,7 +386,7 @@ class Recorder:
         """Read the gripper command state from the mirror file or optional I/O bits.
 
         The keyboard-gripper status file is preferred because it reflects the
-        same Robotiq command source used by mirror_relative.py. I/O remains a
+        same Robotiq command source used by mirror_relative_keyboard.py. I/O remains a
         fallback for installations that expose gripper state through UR bits.
         """
         mirror_status = read_gripper_status_file(self.cfg.gripper_status_file)
