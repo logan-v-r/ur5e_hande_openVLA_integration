@@ -223,6 +223,8 @@ from inference.ur5_action_adapter import (
 )
 from robot_control import robotiq_gripper
 
+import traceback
+
 
 # ---------------------------------------------------------------------------
 # Model configuration
@@ -1117,6 +1119,7 @@ def main() -> None:
 
     except Exception as exc:
         print(f"\nLive inference failed: {exc}")
+        traceback.print_exc()
 
         if rtde_c is not None:
             print("Sending stopL()...")
