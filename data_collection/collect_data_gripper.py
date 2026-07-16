@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-collect_openvla_realsense_simple.py
+collect_data_gripper.py
 ===================================
 Read-only 5 Hz UR5e + RealSense recorder for OpenVLA dataset collection.
 
@@ -8,12 +8,13 @@ Run this in a SECOND terminal while your 125 Hz mirror script controls the UR5e.
 This script never creates a control or I/O interface and never commands the robot
 or gripper to avoid contention issues.
 
-Output is intentionally RAW, not RLDS. A later cleanup/conversion script (look at data_processing/) can:
-  * drop stale/missing camera records
-  * remove near-zero actions
-  * reject unsafe or incomplete recordings
-  * review task success
-  * convert retained steps to the OpenVLA/RLDS image + 8D-action format
+Output is intentionally raw, not RLDS.
+
+After collection:
+* researchers manually remove unsuccessful or inaccurate episodes;
+* clean_raw_episodes.py applies automated quality checks, removes
+  low-information steps, and recomputes actions;
+* the custom dataset builder converts cleaned episodes into TFDS/RLDS format.
 
 Folder layout
 -------------
@@ -40,7 +41,12 @@ Optional gripper observation (read-only):
   --gripper-status-file ./gripper_status.json
   --gripper-command-output-bit 0 --gripper-state-input-bit 0
 
-When a mirror gripper status file is provided, it is used before I/O bits.
+Note on gripper data
+--------------------
+For demonstrations that include gripper actions, provide either
+--gripper-status-file or configured gripper I/O bits. Without a valid
+gripper source, the recorder can save arm observations, but it cannot
+construct a complete 8D action label.
 """
 
 from __future__ import annotations
