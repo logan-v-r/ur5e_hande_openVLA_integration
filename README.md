@@ -463,6 +463,11 @@ Primary contributions include:
 * Reviewing and cleaning recorded episodes
 * Logging robot and model behavior
 * Evaluating experimental performance
+* Setting up the OpenVLA environment after fine-tuning
+* Helping to connect and calibrate UR5e through `ur_rtde`
+* Proofreading code and performing sanity-checks
+* Configuring UR5e and UR7e start positions and quick-reset programs for episode collection
+* Designed training tasks
 * Leading the current post-fine-tuning evaluation work
 
 Both researchers worked together during physical demonstration collection, robot testing, troubleshooting, and evaluation.
