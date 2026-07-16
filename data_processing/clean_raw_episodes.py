@@ -22,6 +22,53 @@ amount of idle context around meaningful actions, copies only retained images,
 reindexes steps/images, and recomputes actions between retained steps.
 Images are NOT resized here; keep native RGB files and let the RLDS/OpenVLA
 preprocessing pipeline resize/crop/normalize them consistently.
+
+Example usage
+-------------
+
+Run from the repository root:
+
+python data_processing/clean_raw_episodes.py \
+    --input-root /path/to/raw_episodes \
+    --output-root /path/to/cleaned_episodes
+
+For example:
+
+python data_processing/clean_raw_episodes.py \
+    --input-root ~/openvla/datasets/raw \
+    --output-root ~/openvla/datasets/cleaned
+
+By default, the script:
+* requires each episode to contain a COMPLETE.json marker;
+* rejects steps with invalid camera, TCP, safety, timing, or image data;
+* treats translation of at least 0.002 m, rotation of at least 1 degree,
+  or a gripper delta of at least 0.5 as meaningful action;
+* keeps one idle context step before and after meaningful movement;
+* rejects cleaned episodes with fewer than five retained steps;
+* adds a terminal action to the final retained step; and
+* does not overwrite an existing cleaned episode.
+
+To replace existing cleaned output, add:
+
+--overwrite
+
+Example with selected custom thresholds:
+
+python data_processing/clean_raw_episodes.py \
+    --input-root ~/openvla/datasets/raw \
+    --output-root ~/openvla/datasets/cleaned \
+    --min-translation-m 0.002 \
+    --min-rotation-deg 1.0 \
+    --keep-idle-before-motion 1 \
+    --keep-idle-after-motion 1 \
+    --max-dt-s 0.6 \
+    --min-steps 5 \
+    --overwrite
+
+Run the following command to view every available option:
+
+python data_processing/clean_raw_episodes.py --help
+
 """
 
 from __future__ import annotations
