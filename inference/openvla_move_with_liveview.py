@@ -231,18 +231,18 @@ from robot_control import robotiq_gripper
 # Local directory containing the merged fine-tuned model and its
 # dataset_statistics.json file.
 MODEL_PATH = os.path.expanduser(
-    "~/workspaces/openvla/runs/YOUR_FINE_TUNED_MODEL_DIRECTORY"
+    "/home/atu-2/workspaces/openvla/runs/openvla-7b+ur5e_openvla+b16+lr-0.0005+lora-r8+dropout-0.0+q-4bit--ur5e_qlora_r8_b1_acc16"
 )
 
 # Leave as None to allow OpenVLAInference to select `ur5e_openvla` or the
 # only available normalization-statistics key.
-UNNORM_KEY: str | None = None
+UNNORM_KEY = "ur5e_openvla" # str | None = None
 
 # Optional multiplier applied by OpenVLAInference to translation and rotation.
 # Gripper and terminal values are not scaled.
 ACTION_SCALE = 1.0
 
-INSTRUCTION = "pick up the red block"
+INSTRUCTION = "Place the red block on the yellow platform"
 
 # Stop the episode when the predicted terminal value reaches this threshold.
 TERMINATION_THRESHOLD = 0.5
@@ -257,10 +257,10 @@ ROBOT_IP = "192.168.1.102"
 
 # Maximum number of image-action cycles allowed if the model does not
 # predict termination.
-MAX_STEPS = 15
+MAX_STEPS = 60
 
 # Pause between completed actions and the next camera observation.
-INTER_STEP_PAUSE_SECONDS = 0.1
+INTER_STEP_PAUSE_SECONDS = 0.05
 
 # Conservative linear movement settings.
 SPEED_M_PER_S = 0.1
