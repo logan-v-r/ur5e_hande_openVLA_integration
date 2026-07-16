@@ -1,25 +1,25 @@
 # Data Collection
 
-This directory contains the script used to record robot demonstrations for the custom OpenVLA fine-tuning dataset.
+This directory contains the script used to record UR5e demonstrations for the custom OpenVLA fine-tuning dataset.
 
 ## Contents
 
-| File                      | Purpose                                                                                                                                 |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `collect_data_gripper.py` | Records camera images, UR5e robot states, actions, gripper information, task instructions, and episode metadata during a demonstration. |
+| File                      | Purpose                                                                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `collect_data_gripper.py` | Records RealSense images, UR5e telemetry, derived actions, gripper information, task instructions, and episode metadata. |
 
 ## How It Works
 
 `collect_data_gripper.py` runs alongside [`mirror_relative_keyboard.py`](../robot_control/mirror_relative_keyboard.py).
 
-During collection:
+The mirror script controls the UR5e by:
 
-* The UR7e is moved manually in teach mode.
-* Relative UR7e movement is transformed and mirrored onto the UR5e.
-* The UR5e Hand-E gripper is controlled through keyboard input.
-* `collect_data_gripper.py` records the demonstration performed by the UR5e.
+* Reading relative movement from a manually operated UR7e
+* Transforming and mirroring that movement onto the UR5e
+* Accepting keyboard commands for the Hand-E gripper
+* Optionally writing the current gripper command to a shared status file
 
-The UR7e is used only as the leader device. The UR5e is the robot whose observations and actions are saved because it is also the robot used during OpenVLA inference.
+The collection script is read-only. It does not command the robot or gripper. It records the UR5e demonstration in a separate terminal while the mirror script performs the control.
 
 ## Data Collection Procedure
 
@@ -27,57 +27,54 @@ A typical demonstration is collected as follows:
 
 1. Move both robots to their saved starting positions.
 2. Arrange the workspace for the selected task instruction.
-3. Confirm that both operators, the camera, the robots, and the gripper are ready.
+3. Confirm that both operators, the camera, robots, and gripper are ready.
 4. Run `mirror_relative_keyboard.py` in the first terminal.
 5. Run `collect_data_gripper.py` in a separate terminal.
-6. Perform the demonstration by moving the UR7e and entering the required gripper commands.
-7. Stop the recording when the task is complete.
+6. Perform the demonstration by moving the UR7e and entering gripper commands.
+7. Stop the recorder cleanly when the task is complete.
 8. Review the episode and remove it if the demonstration was unsuccessful or inaccurate.
 
-## Recorded Data
+## Recorded Output
 
-Each episode contains the information needed for later cleaning and RLDS conversion, including:
+Each raw episode contains:
+
+```text
+episode_.../
+├── episode_metadata.json
+├── steps.jsonl
+├── images/
+└── COMPLETE.json
+```
+
+The recorded data includes:
 
 * RGB camera images
-* UR5e TCP poses
-* Relative translation and rotation actions
-* Gripper state or command
+* UR5e TCP and joint states
+* Relative translation and rotation actions calculated between observations
+* Gripper state or command, when a configured source is available
 * Natural-language task instruction
-* Timing and episode metadata
+* Timing, camera, robot, and quality metadata
+
+`COMPLETE.json` is written only after a clean shutdown. The raw episodes are later reviewed and processed using [`clean_raw_episodes.py`](../data_processing/clean_raw_episodes.py).
 
 Raw demonstrations are not committed to this repository because of their size.
 
-## Project Workflow
+## Workflow
 
 ```text
-UR7e-to-UR5e motion mirroring
+`mirror_relative_keyboard.py`
+              +
+ `collect_data_gripper.py`
               ↓
-     Demonstration recording
+      Raw demonstration episodes
               ↓
-      Raw episode review
+       Manual task review
               ↓
-   Data cleaning and validation
+      `clean_raw_episodes.py`
               ↓
        TFDS/RLDS conversion
-              ↓
-       OpenVLA fine-tuning
 ```
-
-Related directories:
-
-* [`robot_control/`](../robot_control/) — motion mirroring and gripper control
-* [`data_processing/`](../data_processing/) — raw episode cleaning and validation
-* [`rlds_dataset_builder/`](../rlds_dataset_builder/) — RLDS dataset conversion
-* [`training/`](../training/) — OpenVLA fine-tuning
 
 ## Safety
 
-This workflow controls physical industrial robot arms and requires active supervision.
-
-Before collection:
-
-* Keep the emergency stop accessible.
-* Confirm that the workspace is clear.
-* Verify that both robots begin in the expected positions.
-* Use conservative robot speeds.
-* Stop immediately if the UR5e does not mirror the intended movement.
+This workflow controls physical industrial robots and requires active supervision. Keep the emergency stop accessible, clear the workspace before movement, and stop immediately if the UR5e does not follow the expected motion.
