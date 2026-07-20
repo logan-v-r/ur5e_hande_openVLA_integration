@@ -1,9 +1,9 @@
 """
 Load the fine-tuned UR5e OpenVLA model and produce processed actions.
 
-The custom `ur5e_openvla` dataset stores eight-dimensional actions:
+The deployed fine-tuned `ur5e_openvla` model produces seven-dimensional actions:
 
-    [dx, dy, dz, drx, dry, drz, gripper_delta, terminate]
+    [dx, dy, dz, drx, dry, drz, gripper_delta]
 
 Action conventions
 ------------------
@@ -28,12 +28,6 @@ Gripper:
         negative -> move toward open
         near zero -> no state change
 
-Termination:
-    The eighth value is the episode-terminal indicator:
-
-        0.0 -> continue the episode
-        1.0 -> terminal step
-
 This module handles model loading, image preparation, action
 de-normalization, and action formatting. It does not calculate a UR5e
 target pose or command robot hardware.
@@ -56,7 +50,7 @@ from PIL import Image
 from transformers import AutoModelForVision2Seq, AutoProcessor
 
 
-ACTION_DIMENSION = 8
+ACTION_DIMENSION = 7
 
 ACTION_DIM_LABELS = [
     "dx",
@@ -66,7 +60,6 @@ ACTION_DIM_LABELS = [
     "dry",
     "drz",
     "gripper_delta",
-    "terminate",
 ]
 
 
@@ -75,7 +68,7 @@ class OpenVLAInference:
     Run single-action inference with the fine-tuned UR5e OpenVLA model.
 
     One RGB observation and one language instruction produce one
-    eight-dimensional action. The physical result of that action should
+    seven-dimensional action. The physical result of that action should
     be observed in a new image before the next call to `step()`.
     """
 
@@ -101,8 +94,7 @@ class OpenVLAInference:
 
             action_scale:
                 Optional multiplier applied to translation and rotation
-                deltas after de-normalization. Gripper and termination
-                values are not scaled.
+                deltas after de-normalization. The gripper value is not scaled.
 
         Raises:
             ValueError:
@@ -277,7 +269,6 @@ class OpenVLAInference:
                     world_vector
                     rotation_delta_base_frame
                     gripper_delta
-                    terminate_episode
 
             action:
                 Processed action consumed by `ur5_action_adapter.py`:
@@ -285,7 +276,6 @@ class OpenVLAInference:
                     world_vector
                     rot_axangle
                     gripper
-                    terminate_episode
 
         Notes:
             The rotation output is already a base-frame rotation vector.
@@ -343,7 +333,6 @@ class OpenVLAInference:
             "world_vector": predicted_action[0:3].copy(),
             "rotation_delta_base_frame": predicted_action[3:6].copy(),
             "gripper_delta": predicted_action[6:7].copy(),
-            "terminate_episode": predicted_action[7:8].copy(),
         }
 
         action = {
@@ -355,9 +344,6 @@ class OpenVLAInference:
                 * self.action_scale
             ),
             "gripper": raw_action["gripper_delta"].copy(),
-            "terminate_episode": (
-                raw_action["terminate_episode"].copy()
-            ),
         }
 
         self.num_image_history += 1
@@ -408,37 +394,6 @@ class OpenVLAInference:
                 f"{predicted_action}"
             )
 
-    def should_terminate(
-        self,
-        action: dict[str, np.ndarray],
-        threshold: float = 0.5,
-    ) -> bool:
-        """
-        Return whether the predicted terminal value exceeds a threshold.
-
-        The physical execution script must decide when and how to stop.
-        This method does not command hardware.
-        """
-        if not 0.0 <= threshold <= 1.0:
-            raise ValueError("threshold must be between 0.0 and 1.0.")
-
-        if "terminate_episode" not in action:
-            raise KeyError(
-                "Action does not contain 'terminate_episode'."
-            )
-
-        value = np.asarray(
-            action["terminate_episode"],
-            dtype=np.float64,
-        ).reshape(-1)
-
-        if value.size != 1 or not np.isfinite(value[0]):
-            raise ValueError(
-                "terminate_episode must contain one finite value."
-            )
-
-        return bool(value[0] >= threshold)
-
     def visualize_epoch(
         self,
         predicted_raw_actions: Sequence[dict[str, np.ndarray]],
@@ -446,7 +401,7 @@ class OpenVLAInference:
         save_path: str,
     ) -> None:
         """
-        Save a visualization of images and predicted eight-dimensional
+        Save a visualization of images and predicted seven-dimensional
         actions from one evaluation episode.
         """
         if not predicted_raw_actions:
@@ -476,7 +431,6 @@ class OpenVLAInference:
                         action["world_vector"],
                         action["rotation_delta_base_frame"],
                         action["gripper_delta"],
-                        action["terminate_episode"],
                     ]
                 )
                 for action in predicted_raw_actions
