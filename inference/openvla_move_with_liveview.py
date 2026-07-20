@@ -7,35 +7,32 @@ For each inference step, this script:
 
 2. Sends the image and language instruction to the fine-tuned OpenVLA model.
 
-3. Receives an eight-dimensional action:
+3. Receives a seven-dimensional action:
 
    ```
-   [dx, dy, dz, drx, dry, drz, gripper_delta, terminate]
+   [dx, dy, dz, drx, dry, drz, gripper_delta]
    ```
 
-4. Stops the episode without executing an action when the model predicts
-   the terminal action.
-
-5. Uses `ur5_action_adapter.py` to:
+4. Uses `ur5_action_adapter.py` to:
    - convert the relative arm action into a UR5e TCP target;
    - convert the gripper-state delta into "open", "close", or None.
 
-6. Checks the TCP target using the UR controller's safety and
+5. Checks the TCP target using the UR controller's safety and
    inverse-kinematics functions.
 
-7. Executes an asynchronous linear movement while displaying a live
+6. Executes an asynchronous linear movement while displaying a live
    camera preview.
 
-8. Executes a gripper command after the arm movement when one is predicted.
+7. Executes a gripper command after the arm movement when one is predicted.
 
-9. Captures a new observation and repeats.
+8. Captures a new observation and repeats.
 
 Responsibilities are separated across three files:
 
 ```
 openvla_inference.py
     Loads the fine-tuned model, de-normalizes its output, and formats
-    the custom eight-dimensional action.
+    the custom seven-dimensional action.
 
 ur5_action_adapter.py
     Converts the processed base-frame action into a limited UR5e TCP
@@ -83,7 +80,7 @@ current_tcp:
     UR5e TCP pose before execution.
 
 raw_action:
-    De-normalized eight-dimensional model output.
+    De-normalized seven-dimensional model output.
 
 processed_action:
     Action fields passed to the UR5e action adapter.
@@ -93,9 +90,6 @@ target_tcp:
 
 gripper_command:
     "open", "close", or None.
-
-terminate_predicted:
-    Whether the terminal-action threshold was reached.
 
 pose_is_safe:
     Result of the UR controller's pose-safety check.
@@ -107,8 +101,8 @@ resulting_tcp:
     UR5e TCP pose after successful execution.
 
 execution_status:
-    Outcome such as "executed", "stopped_on_terminal_prediction",
-    "rejected_by_safety_limits", or "rejected_no_ik_solution".
+    Outcome such as "executed", "rejected_by_safety_limits", or
+    "rejected_no_ik_solution".
 ```
 
 JSON Lines is used so that each step is written immediately and can be
@@ -241,13 +235,11 @@ MODEL_PATH = os.path.expanduser(
 UNNORM_KEY = "ur5e_openvla" # str | None = None
 
 # Optional multiplier applied by OpenVLAInference to translation and rotation.
-# Gripper and terminal values are not scaled.
+# Gripper values are not scaled.
 ACTION_SCALE = 1.0
 
 INSTRUCTION = "Place the red block on the yellow platform"
 
-# Stop the episode when the predicted terminal value reaches this threshold.
-TERMINATION_THRESHOLD = 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -257,8 +249,7 @@ TERMINATION_THRESHOLD = 0.5
 # This value should correspond with YOUR robot's IP!
 ROBOT_IP = "192.168.1.102"
 
-# Maximum number of image-action cycles allowed if the model does not
-# predict termination.
+# Maximum number of image-action cycles in one evaluation episode.
 MAX_STEPS = 60
 
 # Pause between completed actions and the next camera observation.
@@ -705,7 +696,6 @@ def print_step_summary(
     action: dict[str, np.ndarray],
     target_tcp: list[float] | None,
     gripper_command: str | None,
-    terminate_predicted: bool,
     pose_is_safe: bool | None = None,
     ik_exists: bool | None = None,
 ) -> None:
@@ -736,12 +726,6 @@ def print_step_summary(
     print("\nMapped gripper command:")
     print(gripper_command)
 
-    print("\nTerminal prediction:")
-    print(action["terminate_episode"])
-
-    print("\nTermination threshold reached:")
-    print(terminate_predicted)
-
     if target_tcp is not None:
         print("\nProposed UR5e target TCP pose:")
         print(target_tcp)
@@ -767,11 +751,6 @@ def validate_configuration() -> None:
             "INTER_STEP_PAUSE_SECONDS cannot be negative."
         )
 
-    if not 0.0 <= TERMINATION_THRESHOLD <= 1.0:
-        raise ValueError(
-            "TERMINATION_THRESHOLD must be between 0.0 and 1.0."
-        )
-
     if not INSTRUCTION.strip():
         raise ValueError("INSTRUCTION cannot be empty.")
 
@@ -789,9 +768,8 @@ def main() -> None:
     """
     Run one supervised fine-tuned OpenVLA evaluation episode.
 
-    The terminal prediction is checked before arm or gripper execution.
-    This matches the custom training data, whose terminal row contains
-    zero arm motion, zero gripper delta, and a terminal value of 1.0.
+    The episode runs until MAX_STEPS is reached or execution is stopped
+    by the operator, a safety check, or a runtime error.
     """
     validate_configuration()
 
@@ -877,10 +855,6 @@ def main() -> None:
         print(f"Camera index: {CAMERA_INDEX}")
         print(f"Maximum steps: {MAX_STEPS}")
         print(
-            "Termination threshold: "
-            f"{TERMINATION_THRESHOLD}"
-        )
-        print(
             "Rotation enabled in adapter: "
             f"{action_adapter.USE_ROTATION}"
         )
@@ -903,8 +877,6 @@ def main() -> None:
                 "Press Q or Esc in the preview window "
                 "to stop a movement."
             )
-
-        termination_reached = False
 
         for step_number in range(
             1,
@@ -951,52 +923,6 @@ def main() -> None:
                     "invalid TCP pose."
                 )
 
-            terminate_predicted = (
-                policy.should_terminate(
-                    action,
-                    threshold=TERMINATION_THRESHOLD,
-                )
-            )
-
-            # The terminal row in the custom dataset contains zero arm
-            # motion and zero gripper delta. Stop before calculating or
-            # executing a physical command.
-            if terminate_predicted:
-                print_step_summary(
-                    step_number=step_number,
-                    image_path=image_path,
-                    current_tcp=current_tcp,
-                    raw_action=raw_action,
-                    action=action,
-                    target_tcp=None,
-                    gripper_command=None,
-                    terminate_predicted=True,
-                )
-
-                append_action_log(
-                    {
-                        "step": step_number,
-                        "timestamp": datetime.now().isoformat(),
-                        "image_path": str(image_path),
-                        "instruction": INSTRUCTION,
-                        "current_tcp": current_tcp,
-                        "raw_action": raw_action,
-                        "processed_action": action,
-                        "terminate_predicted": True,
-                        "execution_status": (
-                            "stopped_on_terminal_prediction"
-                        ),
-                    }
-                )
-
-                print(
-                    "\nModel predicted the terminal action. "
-                    "Ending the episode."
-                )
-
-                termination_reached = True
-                break
-
             target_tcp = openvla_to_ur5_target(
                 current_tcp,
                 action,
@@ -1021,7 +947,6 @@ def main() -> None:
                 action=action,
                 target_tcp=target_tcp,
                 gripper_command=gripper_command,
-                terminate_predicted=False,
                 pose_is_safe=pose_is_safe,
                 ik_exists=ik_exists,
             )
@@ -1036,7 +961,6 @@ def main() -> None:
                 "processed_action": action,
                 "target_tcp": target_tcp,
                 "gripper_command": gripper_command,
-                "terminate_predicted": False,
                 "pose_is_safe": pose_is_safe,
                 "ik_exists": ik_exists,
             }
@@ -1099,16 +1023,10 @@ def main() -> None:
                     INTER_STEP_PAUSE_SECONDS
                 )
 
-        if termination_reached:
-            print(
-                "\nEpisode completed after the model "
-                "predicted termination."
-            )
-        else:
-            print(
-                "\nReached MAX_STEPS without a terminal "
-                "prediction."
-            )
+        print(
+            "\nReached MAX_STEPS without an interruption "
+            "or execution failure."
+        )
 
     except KeyboardInterrupt as exc:
         print(f"\nStopped: {exc}")
