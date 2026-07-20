@@ -475,6 +475,7 @@ Primary contributions include:
 * Proofreading code and performing sanity-checks
 * Configuring UR5e and UR7e start positions and quick-reset programs for episode collection
 * Designed training tasks
+* Contributed to the fine-tuning script for the second round of finetuning.
 * Leading the current post-fine-tuning evaluation work
 
 Both researchers worked together during physical demonstration collection, robot testing, troubleshooting, and evaluation.
