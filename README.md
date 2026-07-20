@@ -414,6 +414,13 @@ OpenVLA may generate unsafe or nonsensical actions, especially when the physical
 
 ---
 
+## Development Errors/Hurdles
+
+* Gripper Finetuning Error:  
+In our initial finetuning episodes, we recorded gripper actions as a delta. This resulted in <1% of actions including a gripper change. After testing, we found this caused the model to never send gripper actions. To fix this, we had to re-clean the dataset and replace the gripper delta with a binary representing absolute gripper state (0 - open, 1 - closed). 
+
+
+---
 ## Future Work
 
 Planned next steps include:
