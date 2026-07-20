@@ -5,7 +5,7 @@ This builder converts the cleaned episode folders produced by
 
 Expected cleaned episode layout:
 
-    ~/workspaces/openvla/datasets/ur5e_clean/
+    ~/workspaces/openvla/datasets/ur5e_clean_absolute/
       episode_.../
         episode_metadata.json
         steps.jsonl
@@ -20,7 +20,7 @@ Run from this directory with:
 
 Optional: override the cleaned-data folder without editing this file:
 
-    UR5E_OPENVLA_CLEAN_ROOT=/path/to/ur5e_clean tfds build
+    UR5E_OPENVLA_CLEAN_ROOT=/path/to/ur5e_clean_absolute tfds build
 """
 
 from __future__ import annotations
@@ -38,7 +38,9 @@ import tensorflow_hub as hub
 
 # Default cleaned-data location. You can override this with the environment
 # variable UR5E_OPENVLA_CLEAN_ROOT when running `tfds build`.
-DEFAULT_CLEAN_DATA_ROOT = Path.home() / "workspaces" / "openvla" / "datasets" / "ur5e_clean"
+DEFAULT_CLEAN_DATA_ROOT = (
+    Path.home() / "workspaces" / "openvla" / "datasets" / "ur5e_clean_absolute"
+)
 
 
 class Ur5eOpenvla(tfds.core.GeneratorBasedBuilder):
@@ -47,13 +49,17 @@ class Ur5eOpenvla(tfds.core.GeneratorBasedBuilder):
     Each example is one episode. Each episode contains a sequence of steps with:
       - observation.image: native RGB camera frame from RealSense
       - observation.state: [x, y, z, rx, ry, rz, gripper_closed]
-      - action: [dx, dy, dz, drx, dry, drz, gripper_delta, terminate]
+      - action: [dx, dy, dz, drx, dry, drz, gripper_closed]
+        where gripper_closed is an absolute target: 0.0=open, 1.0=closed
       - language_instruction: task instruction repeated per step
     """
 
-    VERSION = tfds.core.Version("1.0.0")
+    VERSION = tfds.core.Version("2.0.0")
     RELEASE_NOTES = {
-        "1.0.0": "Initial UR5e OpenVLA cleaned-episode conversion.",
+        "2.0.0": (
+            "Changed the learned action to seven dimensions and replaced "
+            "gripper delta with an absolute gripper target state."
+        ),
     }
 
     def __init__(self, *args, **kwargs):
@@ -84,11 +90,13 @@ class Ur5eOpenvla(tfds.core.GeneratorBasedBuilder):
                         ),
                     }),
                     "action": tfds.features.Tensor(
-                        shape=(8,),
+                        shape=(7,),
                         dtype=np.float32,
                         doc=(
-                            "Action [dx, dy, dz, drx, dry, drz, gripper_delta, terminate]. "
-                            "TCP delta is in the UR5e base frame."
+                            "Action [dx, dy, dz, drx, dry, drz, gripper_closed]. "
+                            "TCP delta is in the UR5e base frame. "
+                            "gripper_closed is an absolute target state: "
+                            "0.0=open and 1.0=closed."
                         ),
                     ),
                     "discount": tfds.features.Scalar(
@@ -146,7 +154,8 @@ class Ur5eOpenvla(tfds.core.GeneratorBasedBuilder):
         if not clean_root.exists():
             raise FileNotFoundError(
                 f"Cleaned dataset root does not exist: {clean_root}\n"
-                "Set UR5E_OPENVLA_CLEAN_ROOT=/path/to/ur5e_clean or update DEFAULT_CLEAN_DATA_ROOT."
+                "Set UR5E_OPENVLA_CLEAN_ROOT=/path/to/ur5e_clean_absolute "
+                "or update DEFAULT_CLEAN_DATA_ROOT."
             )
 
         episode_dirs = sorted(p for p in clean_root.glob("episode_*") if p.is_dir())
@@ -238,15 +247,19 @@ class Ur5eOpenvla(tfds.core.GeneratorBasedBuilder):
 
         tcp_pose = step.get("follower", {}).get("tcp_pose_actual")
         gripper_closed = step.get("gripper", {}).get("closed")
-        action = step.get("action_to_next_raw", {}).get("action_8d_raw")
+        source_action = step.get("action_to_next_raw", {}).get("action_8d_raw")
 
-        if tcp_pose is None or gripper_closed is None or action is None:
+        if tcp_pose is None or gripper_closed is None or source_action is None:
             return None
-        if len(tcp_pose) != 6 or len(action) != 8:
+        if len(tcp_pose) != 6 or len(source_action) != 8:
             return None
 
         state = np.asarray(list(tcp_pose) + [gripper_closed], dtype=np.float32)
-        action = np.asarray(action, dtype=np.float32)
+
+        # The converted cleaned dataset retains an eighth termination value for
+        # traceability. Termination remains represented separately through
+        # is_last, is_terminal, and reward, so the learned action is 7D.
+        action = np.asarray(source_action[:7], dtype=np.float32)
 
         if not np.all(np.isfinite(state)) or not np.all(np.isfinite(action)):
             return None
