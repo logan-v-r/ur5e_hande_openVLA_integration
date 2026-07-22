@@ -10,12 +10,12 @@ For each inference step, this script:
 3. Receives a seven-dimensional action:
 
    ```
-   [dx, dy, dz, drx, dry, drz, gripper_delta]
+   [dx, dy, dz, drx, dry, drz, gripper_closed_target]
    ```
 
 4. Uses `ur5_action_adapter.py` to:
    - convert the relative arm action into a UR5e TCP target;
-   - convert the gripper-state delta into "open", "close", or None.
+   - convert the absolute gripper target into "open" or "close".
 
 5. Checks the TCP target using the UR controller's safety and
    inverse-kinematics functions.
@@ -88,8 +88,11 @@ processed_action:
 target_tcp:
     Proposed UR5e TCP target, when an arm action is evaluated.
 
+predicted_gripper_command:
+    Absolute target mapped to "open" or "close".
+
 gripper_command:
-    "open", "close", or None.
+    Command actually sent this cycle, or None when a repeated target is suppressed.
 
 pose_is_safe:
     Result of the UR controller's pose-safety check.
@@ -227,7 +230,7 @@ import traceback
 # Local directory containing the merged fine-tuned model and its
 # dataset_statistics.json file.
 MODEL_PATH = os.path.expanduser(
-    "/home/atu-2/workspaces/openvla/runs/openvla-7b+ur5e_openvla+b16+lr-0.0005+lora-r8+dropout-0.0+q-4bit--ur5e_qlora_r8_b1_acc16"
+    "/home/atu-2/workspaces/openvla/runs/openvla-7b+ur5e_openvla+b8+lr-0.0005+lora-r32+dropout-0.0+q-4bit--ur5e-hande-absolute-gripper-v2--image_aug"
 )
 
 # Leave as None to allow OpenVLAInference to select `ur5e_openvla` or the
@@ -241,7 +244,6 @@ ACTION_SCALE = 1.0
 INSTRUCTION = "Place the red block on the yellow platform"
 
 
-
 # ---------------------------------------------------------------------------
 # UR5e configuration
 # ---------------------------------------------------------------------------
@@ -250,7 +252,7 @@ INSTRUCTION = "Place the red block on the yellow platform"
 ROBOT_IP = "192.168.1.102"
 
 # Maximum number of image-action cycles in one evaluation episode.
-MAX_STEPS = 60
+MAX_STEPS = 200
 
 # Pause between completed actions and the next camera observation.
 INTER_STEP_PAUSE_SECONDS = 0.05
@@ -310,7 +312,7 @@ GRIPPER_CLOSED_POSITION = 255
 OUTPUT_DIR = Path(
     os.path.expanduser(
         "~/workspaces/openvla/ur5_rtde/logs/"
-        "fine_tuned_openvla/current_trial"
+        "fine_tuned_openvla_v2/red_block_yellow_platform/trial_01"
     )
 )
 
@@ -782,6 +784,7 @@ def main() -> None:
     rtde_c: rtde_control.RTDEControlInterface | None = None
     rtde_r: rtde_receive.RTDEReceiveInterface | None = None
     gripper: robotiq_gripper.RobotiqGripper | None = None
+    last_executed_gripper_command: str | None = None
 
     try:
         print(
@@ -928,9 +931,20 @@ def main() -> None:
                 action,
             )
 
-            gripper_command = (
+            predicted_gripper_command = (
                 openvla_to_gripper_command(action)
             )
+
+            # The model predicts an absolute target every cycle. Avoid sending
+            # the same physical Hand-E command repeatedly after it has already
+            # been executed successfully. The first prediction is always sent.
+            if (
+                predicted_gripper_command
+                == last_executed_gripper_command
+            ):
+                gripper_command = None
+            else:
+                gripper_command = predicted_gripper_command
 
             pose_is_safe, ik_exists = (
                 validate_target_pose(
@@ -960,6 +974,7 @@ def main() -> None:
                 "raw_action": raw_action,
                 "processed_action": action,
                 "target_tcp": target_tcp,
+                "predicted_gripper_command": predicted_gripper_command,
                 "gripper_command": gripper_command,
                 "pose_is_safe": pose_is_safe,
                 "ik_exists": ik_exists,
@@ -999,6 +1014,9 @@ def main() -> None:
                     gripper,
                     gripper_command,
                 )
+
+                if gripper_command is not None:
+                    last_executed_gripper_command = gripper_command
 
             resulting_tcp = list(
                 rtde_r.getActualTCPPose()
