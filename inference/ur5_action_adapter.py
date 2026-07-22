@@ -74,7 +74,8 @@ USE_GRIPPER = True
 #   1.0 -> closed
 # Predictions at or above this threshold command close; predictions below it
 # command open.
-GRIPPER_CLOSED_THRESHOLD = 0.5
+GRIPPER_OPEN_THRESHOLD = 0.30
+GRIPPER_CLOSED_THRESHOLD = 0.70
 
 # ---------------------------------------------------------------------------
 # Rotation helper functions
@@ -228,15 +229,20 @@ def openvla_to_gripper_command(
 ) -> str | None:
     """Map an absolute gripper target to a high-level command.
 
-    The fine-tuned model predicts an absolute binary target:
+    The fine-tuned model predicts an absolute gripper target:
 
         0.0 = open
         1.0 = closed
 
-    Values greater than or equal to ``GRIPPER_CLOSED_THRESHOLD`` map to
-    ``"close"``. Lower values map to ``"open"``. The function does not
-    communicate with the physical gripper. Hardware execution is handled 
-    by openvla_move_with_liveview.py.
+    A deadband prevents uncertain middle-range predictions from repeatedly
+    switching the physical gripper:
+
+        target <= GRIPPER_OPEN_THRESHOLD   -> "open"
+        target >= GRIPPER_CLOSED_THRESHOLD -> "close"
+        otherwise                          -> None
+
+    Returning ``None`` leaves the gripper in its current physical state.
+    This function does not communicate with the physical gripper.
     """
     if not USE_GRIPPER:
         return None
@@ -247,10 +253,13 @@ def openvla_to_gripper_command(
         1,
     )[0]
 
+    if gripper_closed_target <= GRIPPER_OPEN_THRESHOLD:
+        return "open"
+
     if gripper_closed_target >= GRIPPER_CLOSED_THRESHOLD:
         return "close"
 
-    return "open"
+    return None
 
 # ---------------------------------------------------------------------------
 # Diagnostic helper
