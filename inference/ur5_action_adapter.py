@@ -69,14 +69,12 @@ ROTATION_AXIS_MASK = np.array([1.0, 1.0, 1.0], dtype=np.float64)
 # When False, openvla_to_gripper_command() returns None.
 USE_GRIPPER = True
 
-# Minimum absolute predicted gripper-state change required to issue a
-# physical command.
-#
-# The custom dataset stores:
-#   +1.0 -> changed from open to closed
-#   -1.0 -> changed from closed to open
-#    0.0 -> no gripper-state change
-GRIPPER_DELTA_THRESHOLD = 0.5
+# Absolute gripper target threshold. The custom dataset stores:
+#   0.0 -> open
+#   1.0 -> closed
+# Predictions at or above this threshold command close; predictions below it
+# command open.
+GRIPPER_CLOSED_THRESHOLD = 0.5
 
 # ---------------------------------------------------------------------------
 # Rotation helper functions
@@ -228,48 +226,31 @@ def openvla_to_ur5_target(
 def openvla_to_gripper_command(
     openvla_action: Mapping[str, Any],
 ) -> str | None:
-    """
-    Map a predicted gripper-state delta to a high-level command.
+    """Map an absolute gripper target to a high-level command.
 
-    Returns:
-        "close":
-            When the predicted gripper delta is greater than or equal to
-            GRIPPER_DELTA_THRESHOLD.
+    The fine-tuned model predicts an absolute binary target:
 
-        "open":
-            When the predicted gripper delta is less than or equal to
-            -GRIPPER_DELTA_THRESHOLD.
+        0.0 = open
+        1.0 = closed
 
-        None:
-            When gripper control is disabled or the predicted change is
-            inside the no-change deadband.
-
-    The custom dataset stores gripper actions as changes in binary closed
-    state:
-
-        +1.0 -> open to closed
-        -1.0 -> closed to open
-         0.0 -> no state change
-
-    This function does not communicate with the physical gripper.
-    Hardware execution is handled by openvla_move_with_liveview.py.
+    Values greater than or equal to ``GRIPPER_CLOSED_THRESHOLD`` map to
+    ``"close"``. Lower values map to ``"open"``. The function does not
+    communicate with the physical gripper. Hardware execution is handled 
+    by openvla_move_with_liveview.py.
     """
     if not USE_GRIPPER:
         return None
 
-    gripper_delta = _require_vector(
+    gripper_closed_target = _require_vector(
         openvla_action,
         "gripper",
         1,
     )[0]
 
-    if gripper_delta >= GRIPPER_DELTA_THRESHOLD:
+    if gripper_closed_target >= GRIPPER_CLOSED_THRESHOLD:
         return "close"
 
-    if gripper_delta <= -GRIPPER_DELTA_THRESHOLD:
-        return "open"
-
-    return None
+    return "open"
 
 # ---------------------------------------------------------------------------
 # Diagnostic helper
