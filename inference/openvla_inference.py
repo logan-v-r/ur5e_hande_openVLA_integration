@@ -3,7 +3,7 @@ Load the fine-tuned UR5e OpenVLA model and produce processed actions.
 
 The deployed fine-tuned `ur5e_openvla` model produces seven-dimensional actions:
 
-    [dx, dy, dz, drx, dry, drz, gripper_delta]
+    [dx, dy, dz, drx, dry, drz, gripper_closed_target]
 
 Action conventions
 ------------------
@@ -22,11 +22,13 @@ Rotation:
     angles.
 
 Gripper:
-    The seventh value is the change in binary gripper closed state:
+    The seventh value is an absolute binary gripper target:
 
-        positive -> move toward closed
-        negative -> move toward open
-        near zero -> no state change
+        0.0 -> open
+        1.0 -> closed
+
+    Values are thresholded by `ur5_action_adapter.py`; they are not
+    interpreted as signed state changes.
 
 This module handles model loading, image preparation, action
 de-normalization, and action formatting. It does not calculate a UR5e
@@ -59,7 +61,7 @@ ACTION_DIM_LABELS = [
     "drx",
     "dry",
     "drz",
-    "gripper_delta",
+    "gripper_closed_target",
 ]
 
 
@@ -268,7 +270,7 @@ class OpenVLAInference:
 
                     world_vector
                     rotation_delta_base_frame
-                    gripper_delta
+                    gripper_closed_target
 
             action:
                 Processed action consumed by `ur5_action_adapter.py`:
@@ -332,7 +334,7 @@ class OpenVLAInference:
         raw_action = {
             "world_vector": predicted_action[0:3].copy(),
             "rotation_delta_base_frame": predicted_action[3:6].copy(),
-            "gripper_delta": predicted_action[6:7].copy(),
+            "gripper_closed_target": predicted_action[6:7].copy(),
         }
 
         action = {
@@ -343,7 +345,7 @@ class OpenVLAInference:
                 raw_action["rotation_delta_base_frame"]
                 * self.action_scale
             ),
-            "gripper": raw_action["gripper_delta"].copy(),
+            "gripper": raw_action["gripper_closed_target"].copy(),
         }
 
         self.num_image_history += 1
@@ -430,7 +432,7 @@ class OpenVLAInference:
                     [
                         action["world_vector"],
                         action["rotation_delta_base_frame"],
-                        action["gripper_delta"],
+                        action["gripper_closed_target"],
                     ]
                 )
                 for action in predicted_raw_actions
