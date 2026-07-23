@@ -414,10 +414,25 @@ OpenVLA may generate unsafe or nonsensical actions, especially when the physical
 
 ---
 
-## Development Errors/Hurdles
+## Model Phases, Hurdles, and Dev Process
+* Phase 1
 
-* Gripper Finetuning Error:  
-In our initial finetuning episodes, we recorded gripper actions as a delta. This resulted in <1% of actions including a gripper change. After testing, we found this caused the model to never send gripper actions. To fix this, we had to re-clean the dataset and replace the gripper delta with a binary representing absolute gripper state (0 - open, 1 - closed). 
+| Improvements          | Shortcomings |
+| ----- | ------- |
+| The model navigated space much more effectively. It could distnguish objects and move toward them well. | The gripper did not work. In our initial finetuning episodes, we recorded gripper actions as a delta. This resulted in <1% of actions including a gripper change. After testing, we found this caused the model to never send gripper actions. To fix this, we had to re-clean the dataset and replace the gripper delta with a binary representing absolute gripper state (0 - open, 1 - closed)  |
+
+Action to improve: We re-fine-tuned the model with the cleaned dataset.
+
+* Phase 2
+  
+| Improvements | Shortcomings |
+| ------------------- | ------- |
+| The model can use its gripper now. It closes when around the grasping target consistently. | The model broke down once the gripper action completed. For whatever reason, OpenVLA inference outputs essentially random values in frames just after the gripper closes around an object. |
+| The ability to move in space remains, and 'move to' commands work well. | The model mixes up objects of the same color. |
+| The model was able to center on blocks as grasping objects somewhat often. | There is a dead zone of objects in the top left of the camera image that increases the chance of the model becoming confused and stalling |
+
+Action to improve: We will test a new model that trains on fewer iterations (Phase 2 trained on our dataset ~7 times, which may have been too much). We will save training checkpoints and test each one to see the path of imporvement and find where the model peaks and where errors come up.
+
 
 
 ---
@@ -475,8 +490,8 @@ Primary contributions include:
 * Proofreading code and performing sanity-checks
 * Configuring UR5e and UR7e start positions and quick-reset programs for episode collection
 * Designed training tasks
-* Contributed to the fine-tuning script for the second round of finetuning.
-* Leading the current post-fine-tuning evaluation work
+* Contributed to the data cleaning script and fine-tuning script for Phase 2.
+* Lead the current post-fine-tuning testing and evaluation work.
 
 Both researchers worked together during physical demonstration collection, robot testing, troubleshooting, and evaluation.
 
