@@ -439,7 +439,7 @@ Action to improve: We will test a new model that trains on fewer iterations (Pha
 | ------------------- | ------- |
 | We can test individual model checkpoints. | We ran out of storage during training, meaning only early checkpoints saved. |
 | We found a bug in the live test script where the inference would be run on an earlier frame rather than the current one. | The early checkpoints did not work well. |
-| We aligned the absolute gripper convention with OpenVLA pretraining to make fine tuning better (0 = closed, 1 = open) | The gripper stalling issue was not diagnosed fully. |
+| We aligned the absolute gripper convention with OpenVLA pretraining to make fine tuning better (0 = closed, 1 = open) | We found that as training steps increased, the model got closer to episode ground-truth actions (was better at predicting gripper action and spatial reasoning) but also was more likely to stall with near-zero movements around grasping time. |
 
 Action to improve: We will retrain and save fewer checkpoints while also clearing storage so that we can actually get a full model to test. It might be worth considering cleaning data with near-zero movements around gripper activation time. The main priority is getting good tests with a model that has enough training time.
 
