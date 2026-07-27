@@ -433,6 +433,16 @@ Action to improve: We re-fine-tuned the model with the cleaned dataset.
 
 Action to improve: We will test a new model that trains on fewer iterations (Phase 2 trained on our dataset ~7 times, which may have been too much). We will save training checkpoints and test each one to see the path of imporvement and find where the model peaks and where errors come up.
 
+* Phase 3
+
+| Improvements | Shortcomings |
+| ------------------- | ------- |
+| We can test individual model checkpoints. | We ran out of storage during training, meaning only early checkpoints saved. |
+| We found a bug in the live test script where the inference would be run on an earlier frame rather than the current one. | The early checkpoints did not work well. |
+| We aligned the absolute gripper convention with OpenVLA pretraining to make fine tuning better (0 = closed, 1 = open) | The gripper stalling issue was not diagnosed fully. |
+
+Action to improve: We will retrain and save fewer checkpoints while also clearing storage so that we can actually get a full model to test. It might be worth considering cleaning data with near-zero movements around gripper activation time. The main priority is getting good tests with a model that has enough training time.
+
 
 
 ---
