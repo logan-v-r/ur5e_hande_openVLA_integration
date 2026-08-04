@@ -17,6 +17,8 @@ Run with:
                                     --dataset_name <DATASET_NAME> \
                                     --run_root_dir <PATH/TO/LOGS/DIR> \
                                     ...
+
+*Please note this script was made to be compatible with our singular rtx4000 setup.
 """
 
 import os
