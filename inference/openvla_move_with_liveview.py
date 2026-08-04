@@ -10,7 +10,7 @@ For each inference step, this script:
 3. Receives a seven-dimensional action:
 
    ```
-   [dx, dy, dz, drx, dry, drz, gripper_closed_target]
+   [dx, dy, dz, drx, dry, drz, gripper_open_target]
    ```
 
 4. Uses `ur5_action_adapter.py` to:
@@ -69,6 +69,9 @@ step:
 
 timestamp:
     Date and time when the step was processed.
+
+observation_timestamp:
+    Date and time when the inference camera frame was captured.
 
 image_path:
     Path to the saved camera observation.
@@ -230,7 +233,7 @@ import traceback
 # Local directory containing the merged fine-tuned model and its
 # dataset_statistics.json file.
 MODEL_PATH = os.path.expanduser(
-    "/home/atu-2/workspaces/openvla/runs/openvla-7b+ur5e_openvla+b8+lr-0.0005+lora-r32+dropout-0.0+q-4bit--ur5e-hande-absolute-gripper-v2--image_aug"
+    "/home/atu-2/workspaces/openvla/runs/openvla-7b+ur5e_openvla+b8+lr-0.0001+lora-r32+dropout-0.0+q-4bit--red-block-only-q4-lora32-3k--image_aug--2000_chkpt"
 )
 
 # Leave as None to allow OpenVLAInference to select `ur5e_openvla` or the
@@ -241,7 +244,7 @@ UNNORM_KEY = "ur5e_openvla" # str | None = None
 # Gripper values are not scaled.
 ACTION_SCALE = 1.0
 
-INSTRUCTION = "Place the red block on the yellow platform"
+INSTRUCTION = "Place the red block on the yellow platform."
 
 
 # ---------------------------------------------------------------------------
@@ -252,13 +255,13 @@ INSTRUCTION = "Place the red block on the yellow platform"
 ROBOT_IP = "192.168.1.102"
 
 # Maximum number of image-action cycles in one evaluation episode.
-MAX_STEPS = 200
+MAX_STEPS = 250
 
 # Pause between completed actions and the next camera observation.
-INTER_STEP_PAUSE_SECONDS = 0.05
+INTER_STEP_PAUSE_SECONDS = 0.0
 
 # Conservative linear movement settings.
-SPEED_M_PER_S = 0.1
+SPEED_M_PER_S = 0.2
 ACCEL_M_PER_S2 = 0.8
 
 # Deceleration used when stopping an asynchronous linear movement.
@@ -287,6 +290,10 @@ PREVIEW_WINDOW_NAME = "OpenVLA UR5e Live Feed"
 # and white balance can stabilize.
 CAMERA_WARMUP_FRAMES = 60
 
+# Number of queued frames discarded immediately before each inference
+# observation so OpenVLA receives the freshest available image.
+CAMERA_FLUSH_FRAMES = 5
+
 
 # ---------------------------------------------------------------------------
 # Hand-E gripper configuration
@@ -312,7 +319,7 @@ GRIPPER_CLOSED_POSITION = 255
 OUTPUT_DIR = Path(
     os.path.expanduser(
         "~/workspaces/openvla/ur5_rtde/logs/"
-        "fine_tuned_openvla_v2/red_block_yellow_platform/trial_01"
+        "fine_tuned_openvla_v4/2000_step/trial_03"
     )
 )
 
@@ -380,9 +387,9 @@ def save_frame(
 
 def get_camera_frame(
     capture: cv2.VideoCapture,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, str]:
     """
-    Read one camera observation.
+    Discard queued frames and read one fresh camera observation.
 
     Returns:
         bgr_frame:
@@ -390,12 +397,23 @@ def get_camera_frame(
 
         rgb_frame:
             RGB uint8 image sent to OpenVLA.
+
+        observation_timestamp:
+            ISO-formatted local timestamp recorded immediately after the
+            inference frame is read from the camera.
     """
+    for _ in range(CAMERA_FLUSH_FRAMES):
+        if not capture.grab():
+            raise RuntimeError(
+                "Could not discard a queued RealSense camera frame."
+            )
+
     ok, bgr_frame = capture.read()
+    observation_timestamp = datetime.now().isoformat()
 
     if not ok or bgr_frame is None:
         raise RuntimeError(
-            "Could not read a frame from the RealSense camera."
+            "Could not read a fresh frame from the RealSense camera."
         )
 
     if bgr_frame.dtype != np.uint8:
@@ -408,7 +426,7 @@ def get_camera_frame(
         cv2.COLOR_BGR2RGB,
     )
 
-    return bgr_frame, rgb_frame
+    return bgr_frame, rgb_frame, observation_timestamp
 
 
 def rotation_error_radians(
@@ -505,19 +523,17 @@ def execute_gripper_command(
     """
     Execute one high-level Hand-E gripper command.
 
-    The command is produced from the model's predicted gripper-state
-    delta:
+    The command is produced from the model's absolute gripper-open target:
 
-        positive delta -> "close"
-        negative delta -> "open"
-        no-change deadband -> None
+        target >= open threshold   -> "open"
+        target <= closed threshold -> "close"
+        middle range               -> None (hold/no command)
 
-    Every non-None delta command is executed. Commands are not suppressed
-    based on the previous command because the model predicts state changes,
-    not an absolute desired gripper state.
+    Repeated absolute commands are suppressed by the caller after the same
+    physical command has already executed successfully.
     """
     if command is None:
-        print("No gripper-state change predicted.")
+        print("Absolute gripper-open target is in the hold range, or the repeated command was suppressed.")
         return
 
     if command == "open":
@@ -722,7 +738,7 @@ def print_step_summary(
     print("\nRotation proposal [drx, dry, drz]:")
     print(action["rot_axangle"])
 
-    print("\nGripper delta:")
+    print("\nAbsolute gripper-open target:")
     print(action["gripper"])
 
     print("\nMapped gripper command:")
@@ -751,6 +767,11 @@ def validate_configuration() -> None:
     if INTER_STEP_PAUSE_SECONDS < 0.0:
         raise ValueError(
             "INTER_STEP_PAUSE_SECONDS cannot be negative."
+        )
+
+    if CAMERA_FLUSH_FRAMES < 0:
+        raise ValueError(
+            "CAMERA_FLUSH_FRAMES cannot be negative."
         )
 
     if not INSTRUCTION.strip():
@@ -787,6 +808,16 @@ def main() -> None:
     last_executed_gripper_command: str | None = None
 
     try:
+        print("\nLoading fine-tuned OpenVLA model...")
+
+        policy = OpenVLAInference(
+            saved_model_path=MODEL_PATH,
+            unnorm_key=UNNORM_KEY,
+            action_scale=ACTION_SCALE,
+        )
+
+        policy.reset(INSTRUCTION)
+
         print(
             f"Connecting to UR5e receive interface at "
             f"{ROBOT_IP}..."
@@ -824,6 +855,15 @@ def main() -> None:
                 f"{CAMERA_INDEX}."
             )
 
+        buffer_request_accepted = capture.set(
+            cv2.CAP_PROP_BUFFERSIZE,
+            1,
+        )
+        print(
+            "Requested camera buffer size of 1 frame: "
+            f"accepted={buffer_request_accepted}"
+        )
+
         if SHOW_LIVE_PREVIEW:
             cv2.namedWindow(
                 PREVIEW_WINDOW_NAME,
@@ -839,16 +879,6 @@ def main() -> None:
                     "during warm-up."
                 )
 
-        print("\nLoading fine-tuned OpenVLA model...")
-
-        policy = OpenVLAInference(
-            saved_model_path=MODEL_PATH,
-            unnorm_key=UNNORM_KEY,
-            action_scale=ACTION_SCALE,
-        )
-
-        policy.reset(INSTRUCTION)
-
         print("\n" + "=" * 72)
         print("FINE-TUNED OPENVLA → UR5e LIVE INFERENCE")
         print("=" * 72)
@@ -856,6 +886,7 @@ def main() -> None:
         print(f"Model path: {MODEL_PATH}")
         print(f"Normalization key: {policy.unnorm_key}")
         print(f"Camera index: {CAMERA_INDEX}")
+        print(f"Camera flush frames: {CAMERA_FLUSH_FRAMES}")
         print(f"Maximum steps: {MAX_STEPS}")
         print(
             "Rotation enabled in adapter: "
@@ -891,9 +922,11 @@ def main() -> None:
             )
             print("-" * 72)
 
-            bgr_frame, rgb_frame = get_camera_frame(
-                capture
-            )
+            (
+                bgr_frame,
+                rgb_frame,
+                observation_timestamp,
+            ) = get_camera_frame(capture)
 
             if SHOW_LIVE_PREVIEW:
                 key = show_preview_frame(
@@ -968,6 +1001,7 @@ def main() -> None:
             log_record = {
                 "step": step_number,
                 "timestamp": datetime.now().isoformat(),
+                "observation_timestamp": observation_timestamp,
                 "image_path": str(image_path),
                 "instruction": INSTRUCTION,
                 "current_tcp": current_tcp,
