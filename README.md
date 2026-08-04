@@ -2,182 +2,213 @@
 
 This repository documents the integration, evaluation, and task-specific fine-tuning of [OpenVLA](https://github.com/openvla/openvla) for a Universal Robots UR5e equipped with a Robotiq Hand-E gripper.
 
-The project is being completed by undergraduate research interns at **Longlab, Atlantic Technological University Galway**. Its primary purpose is to build practical experience with vision-language-action models while investigating how OpenVLA performs when transferred to a robotic setup that differs from the environments represented in its pretraining data.
+The project is being completed by undergraduate research interns at **Longlab, Atlantic Technological University Galway**. Its purpose is to build practical experience with vision-language-action models while investigating how OpenVLA performs when transferred to a robotic setup that differs from the environments represented in its pretraining data.
 
-> **Project status:** Active development. Fine-tuning on the first custom dataset has been completed, and evaluation of the fine-tuned model is currently underway.
+> **Project status:** Active development. The project is currently in Phase 4, where single-task models trained only on the red-block-on-yellow-platform task are being evaluated at specified training checkpoints. After checkpoint testing is complete, additional demonstrations will be added to the dataset and new models will be trained for comparison.
 
 ---
 
 ## Project Overview
 
-Vision-language-action models connect three types of information:
+OpenVLA receives:
 
-* **Vision:** What the robot observes through a camera
-* **Language:** The task instruction provided by the user
-* **Action:** The movement and gripper commands produced by the model
+- a natural-language task instruction;
+- one RGB camera image.
 
-OpenVLA receives a natural-language instruction and a single RGB image. It produces a seven-dimensional action:
+It predicts a seven-dimensional robot action:
 
 ```text
 [Δx, Δy, Δz, Δrx, Δry, Δrz, gripper]
 ```
 
-The first three values represent translation, the next three represent rotation, and the final value controls the gripper.
+The first three values control translation, the next three control rotation, and the final value controls the gripper.
 
-This project adapts that output to the Longlab UR5e setup using the `ur_rtde` Python API. The complete project workflow includes:
+This project adapts those predictions to the Longlab UR5e setup through the `ur_rtde` Python API and a custom Hand-E gripper adapter.
 
-1. Evaluating OpenVLA out of the box
-2. Collecting task-specific robot demonstrations
-3. Reviewing and cleaning the recorded episodes
-4. Converting demonstrations into an RLDS-compatible dataset
-5. Fine-tuning OpenVLA with LoRA/QLoRA
-6. Evaluating the fine-tuned model on the physical UR5e setup
+The complete project workflow is:
+
+1. Install and test OpenVLA.
+2. Evaluate the base model on the physical UR5e.
+3. Collect task-specific robot demonstrations.
+4. Review and clean the recorded episodes.
+5. Convert gripper delta commands into absolute states.
+6. Convert the processed demonstrations into RLDS format.
+7. Register the custom RLDS dataset with OpenVLA.
+8. Fine-tune OpenVLA using LoRA or QLoRA and save selected checkpoints.
+9. Evaluate the checkpoints on the physical robot using controlled test conditions.
+10. Add new demonstrations based on observed failure modes, rebuild the dataset, and retrain for comparison.
 
 ---
 
 ## Project Goals
 
-### Learning goal
+### Learning Goal
 
 Develop practical experience with:
 
-* Vision-language-action models
-* Physical robot control through UR-RTDE
-* Camera-based model inference
-* Robot demonstration collection
-* RLDS and TensorFlow Datasets
-* LoRA-based model fine-tuning
-* Physical robot evaluation and troubleshooting
+- vision-language-action models;
+- physical robot control through UR-RTDE;
+- camera-based model inference;
+- robot demonstration collection;
+- RLDS and TensorFlow Datasets;
+- LoRA and QLoRA fine-tuning;
+- physical robot evaluation and troubleshooting.
 
-### Engineering goal
+### Engineering Goal
 
-Integrate OpenVLA into the existing Longlab robotic workspace and improve its performance on tasks requiring:
+Integrate OpenVLA into the Longlab robotic workspace and improve its performance on tasks requiring:
 
-* Language grounding
-* Object recognition
-* Visual reasoning with distractor objects
-* Translation and orientation control
-* Gripper operation
-* Multi-stage pick-and-place behavior
+- language grounding;
+- object recognition;
+- visual reasoning with distractor objects;
+- translation and orientation control;
+- gripper operation;
+- multi-stage pick-and-place behavior.
 
 ---
 
 ## Current Task Set
 
-The first fine-tuning dataset contains demonstrations for the following task groups.
-
-### Move to object
+### Move to Object
 
 Move the gripper so that it hovers above the object named in the instruction.
 
 The stapler, screwdriver, and pliers may all be visible at the same time, requiring the model to identify the requested object while ignoring distractors.
 
-### Move screwdriver to object
+### Move Screwdriver to Object
 
-Pick up the screwdriver and place it next to the object named in the instruction. Multiple possible destination objects may be visible in the workspace.
+Pick up the screwdriver and place it next to the object named in the instruction. Multiple possible destination objects may be visible.
 
-### Place the red block on the yellow platform
+### Place the Red Block on the Yellow Platform
 
 Identify the red block, pick it up, and place it on the yellow platform.
 
-### Place the blue block on the red dustpan
+### Place the Blue Block on the Red Dustpan
 
 Identify the blue block, pick it up, and place it on the red dustpan.
 
-These tasks range from moving toward a language-specified object to completing multi-stage pick-and-place actions.
+These tasks range from moving toward a language-specified object to completing multi-stage pick-and-place behavior.
+
+The current Phase 4 experiments focus only on:
+
+```text
+Place the red block on the yellow platform.
+```
 
 ---
 
 ## Hardware Setup
 
-| Component                          | Role                                                                 |
-| ---------------------------------- | -------------------------------------------------------------------- |
-| Universal Robots UR5e              | Main robot used during demonstration execution and OpenVLA inference |
-| Universal Robots UR7e              | Leader device used during demonstration collection                   |
-| Robotiq Hand-E                     | Gripper attached to the UR5e                                         |
-| Intel RealSense camera             | Provides RGB observations to OpenVLA                                 |
-| NVIDIA RTX 4000 Ada Generation GPU | Used for local inference and fine-tuning                             |
-| Ubuntu workstation                 | Runs robot-control, dataset, inference, and training software        |
-| Ethernet switch/port expander      | Connects the workstation and robots                                  |
+| Component | Role |
+|---|---|
+| Universal Robots UR5e | Robot used during demonstration execution and OpenVLA inference |
+| Universal Robots UR7e | Physical leader device used during demonstration collection |
+| Robotiq Hand-E | Gripper attached to the UR5e |
+| Intel RealSense camera | Supplies RGB observations to OpenVLA |
+| NVIDIA RTX 4000 Ada Generation GPU | Used for local inference and fine-tuning |
+| Ubuntu workstation | Runs robot control, data processing, inference, and training |
+| Ethernet switch or port expander | Connects the workstation and robots |
 
-The camera is mounted on a tripod and positioned slightly above the UR5e workspace, looking downward toward the robot and task area.
+The camera is mounted on a tripod and positioned above the workspace with a downward view of the UR5e and task area.
 
-The UR7e is used only during demonstration collection. The UR5e is the robot controlled during both data collection and OpenVLA evaluation.
+The UR7e is used only during demonstration collection. The UR5e executes the demonstrations and is the robot controlled during OpenVLA evaluation.
 
-Exact hardware models and software versions will be added after the lab workstation configuration is verified.
+### Physical Workspace
+
+The current testing workspace uses a tripod-mounted RGB camera with an elevated view of the UR5e, Hand-E gripper, task objects, and work surface. The image below shows the single-task setup used for the red-block-on-yellow-platform experiments.
+
+![UR5e workspace configured for the red block and yellow platform task](docs/images/ur5e_red_block_workspace.jpg)
+
+The camera position, work surface, robot starting pose, and object arrangement are kept as consistent as possible during checkpoint comparisons. Controlled changes to object position and orientation are introduced when evaluating model generalization.
 
 ---
 
 ## System Architecture
 
-### OpenVLA inference pipeline
+### OpenVLA Inference Pipeline
 
 ```text
 Natural-language instruction
              +
-       RGB camera image
+      RGB camera image
              │
              ▼
           OpenVLA
              │
              ▼
-7D robot action prediction
+    Seven-dimensional action
 [translation, rotation, gripper]
              │
              ▼
-     UR5e action adapter
+       UR5e action adapter
              │
        ┌─────┴─────┐
        ▼           ▼
  UR-RTDE arm   Hand-E gripper
-   command        command
+   command         command
        │           │
        └─────┬─────┘
              ▼
-       UR5e execution
+        UR5e execution
 ```
 
-OpenVLA receives one image for each predicted action. The action adapter converts the model output into commands suitable for the UR5e and Hand-E gripper.
+OpenVLA receives one image for each predicted action. The action adapter scales and converts the model output into commands suitable for the UR5e and Hand-E gripper.
 
-### Demonstration and fine-tuning pipeline
+### Demonstration and Fine-Tuning Pipeline
 
 ```text
-UR7e operated by hand in teach mode
+UR7e operated manually in teach mode
                  │
                  ▼
- Relative movement calculated from UR7e
+Relative leader movement calculated
                  │
                  ▼
- Coordinate transformation and mirroring
+Coordinate transformation and mirroring
                  │
                  ▼
-       Motion executed by UR5e
-                 │
-       Keyboard gripper commands
+Motion executed by the UR5e
                  │
                  ▼
- Images, robot states, actions, and metadata recorded
+Keyboard Hand-E gripper commands
                  │
                  ▼
-        Raw demonstration episodes
+Images, states, actions, and metadata recorded
                  │
                  ▼
-      Episode review and data cleaning
+Raw demonstration episodes
                  │
                  ▼
-       Cleaned demonstration episodes
+Episode review and cleaning
                  │
                  ▼
-       Custom TFDS/RLDS dataset builder
+Gripper delta-to-absolute conversion
                  │
                  ▼
-          `ur5e_openvla` dataset
+Processed demonstration episodes
                  │
                  ▼
-       OpenVLA LoRA/QLoRA fine-tuning
+Custom TFDS/RLDS dataset builder
                  │
                  ▼
-       Fine-tuned model evaluation
+ur5e_openvla RLDS dataset
+                 │
+                 ▼
+OpenVLA dataset registration and transform
+                 │
+                 ▼
+LoRA or QLoRA fine-tuning
+                 │
+                 ▼
+Selected model checkpoints
+                 │
+                 ▼
+Controlled physical evaluation
+                 │
+                 ▼
+Additional demonstrations and dataset expansion
+                 │
+                 ▼
+Retraining and model comparison
 ```
 
 ---
@@ -186,195 +217,625 @@ UR7e operated by hand in teach mode
 
 ```text
 ur5e_hande_openVLA_integration/
-├── robot_control/          # Robot communication, motion mirroring, and gripper control
-├── data_collection/        # Demonstration recording tools
-├── data_processing/        # Demonstration cleaning and validation
-├── rlds_dataset_builder/   # Custom TFDS/RLDS dataset conversion
-├── training/               # OpenVLA fine-tuning scripts and configuration
-├── inference/              # Model inference and physical robot execution
-├── docs/                   # Extended architecture, evaluation, and setup documentation
+├── robot_control/                  # Robot communication, mirroring, and gripper control
+├── data_collection/                # Demonstration recording tools
+├── data_processing/                # Episode cleaning and gripper conversion
+├── rlds_dataset_builder/           # Custom TFDS/RLDS builder
+├── openvla_dataset_registration/   # OpenVLA configs.py and transforms.py additions
+├── training/                       # Fine-tuning scripts and configuration
+├── inference/                      # Model inference and physical robot execution
+├── docs/                           # Extended project documentation and images
 ├── .gitignore
 ├── LICENSE
 └── README.md
 ```
 
-### Directory responsibilities
+### Directory Responsibilities
 
-| Directory                                        | Purpose                                                                                                                        |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| [`robot_control/`](robot_control/)               | Connects to the robots, mirrors relative UR7e movement onto the UR5e, and controls the Hand-E gripper.                         |
-| [`data_collection/`](data_collection/)           | Records images, robot states, actions, task instructions, and metadata during demonstrations.                                  |
-| [`data_processing/`](data_processing/)           | Reviews, cleans, validates, and prepares raw demonstration episodes for dataset conversion.                                    |
-| [`rlds_dataset_builder/`](rlds_dataset_builder/) | Converts cleaned demonstrations into the custom `ur5e_openvla` TFDS/RLDS dataset.                                              |
-| [`training/`](training/)                         | Contains the scripts and configuration used to fine-tune OpenVLA on the custom dataset.                                        |
-| [`inference/`](inference/)                       | Loads OpenVLA, adapts its actions for the UR5e, executes robot commands, and records evaluation data.                          |
-| [`docs/`](docs/)                                 | Provides extended documentation for the system architecture, dataset format, evaluation protocol, safety, and troubleshooting. |
+| Directory | Purpose |
+|---|---|
+| [`robot_control/`](robot_control/) | Connects to the robots, mirrors relative UR7e movement onto the UR5e, and controls the Hand-E gripper. |
+| [`data_collection/`](data_collection/) | Records images, robot states, actions, task instructions, and metadata during demonstrations. |
+| [`data_processing/`](data_processing/) | Cleans raw episodes and converts gripper delta commands into absolute states. |
+| [`rlds_dataset_builder/`](rlds_dataset_builder/) | Provides the custom builder used with the upstream RLDS Dataset Builder repository. |
+| [`openvla_dataset_registration/`](openvla_dataset_registration/) | Registers and standardizes the custom RLDS dataset inside OpenVLA. |
+| [`training/`](training/) | Contains the local LoRA and QLoRA fine-tuning scripts. |
+| [`inference/`](inference/) | Loads OpenVLA, adapts its actions, executes robot commands, and records evaluation data. |
+| [`docs/`](docs/) | Contains extended architecture, setup, evaluation, safety, troubleshooting, and image documentation. |
 
-Each directory contains its own README with detailed file descriptions, configuration requirements, inputs, outputs, and example commands.
+Each directory contains its own README with file descriptions, requirements, and commands.
 
 ---
 
-## Project Workflow
+# End-to-End Workflow
 
-### 1. Out-of-the-box evaluation
+## 1. Install and Test OpenVLA
 
-OpenVLA was first connected to the UR5e through a custom inference and action-adaptation pipeline.
+Clone OpenVLA and follow the official installation instructions:
 
-The initial testing progressed through three control configurations:
+```bash
+git clone https://github.com/openvla/openvla.git
+cd openvla
+```
 
-* Translation only
-* Translation and rotation
-* Translation, rotation, and gripper control
+Follow the [OpenVLA README](https://github.com/openvla/openvla) to:
 
-These tests were used to confirm that the camera, model, action adapter, and robot-control pipeline worked together while identifying the main limitations of the out-of-the-box model.
+1. Create the OpenVLA environment.
+2. Install the required dependencies.
+3. Download or load the base model.
+4. Verify that model inference works before connecting it to the robot.
+5. Review the **Fine-Tuning OpenVLA via LoRA** section.
 
-### 2. Demonstration collection
+This repository supplements the official OpenVLA instructions. It does not replace them.
 
-A UR7e was operated manually in teach mode and used as a physical leader device.
+---
 
-The relative change in the UR7e pose was calculated, transformed to account for the physical arrangement of the robots, and mirrored onto the UR5e. The operator watched the UR5e while moving the UR7e so that demonstrations were based on the behavior of the robot used during inference.
+## 2. Evaluate the Base Model
 
-Hand-E gripper commands were entered separately through the keyboard.
+OpenVLA was first connected to the UR5e through the custom inference and action-adaptation pipeline.
 
-During each demonstration, the system recorded information such as:
+Initial testing progressed through:
 
-* RGB camera images
-* UR5e TCP poses
-* Relative translation and rotation actions
-* Gripper state or command
-* Natural-language task instruction
-* Timing and episode metadata
+1. translation only;
+2. translation and rotation;
+3. translation, rotation, and gripper control.
 
-Unsuccessful or noticeably imprecise demonstrations were removed before dataset conversion.
+These tests verified that the camera, model, robot adapter, and UR5e could operate together while identifying the limitations of the base model on the Longlab setup.
 
-### 3. Data cleaning and validation
+See [`inference/`](inference/) for the inference and live-testing tools.
 
-The retained raw episodes were processed using `clean_raw_episodes.py`.
+---
 
-The cleaning process removes invalid or low-information steps, preserves useful context around meaningful movement, recalculates actions between retained poses, and produces cleaned copies without modifying the original recordings.
+## 3. Collect Demonstrations
 
-The cleaned episodes were then converted into the custom `ur5e_openvla` TensorFlow dataset.
+A UR7e is operated manually in teach mode and used as a physical leader device.
 
-Dataset verification was performed using `visualize_dataset.py` from the [`rlds_dataset_builder`](https://github.com/kpertsch/rlds_dataset_builder) repository.
+The collection process:
 
-Verification included:
+1. Reads the change in the UR7e pose.
+2. Transforms the movement to account for the physical arrangement of the two robots.
+3. Mirrors the relative movement onto the UR5e.
+4. Accepts separate keyboard commands for the Hand-E gripper.
+5. Records the UR5e execution and camera observations.
 
-* Viewing the beginning, middle, and end of randomly selected episodes
-* Confirming that image sequences represented the intended robot motion
-* Checking that language instructions matched the selected episodes
-* Reviewing the distribution of translation, rotation, and gripper actions
-* Identifying unexpected values before fine-tuning
+Each episode can contain:
 
-The raw demonstrations, generated TensorFlow dataset, and visualization outputs are not stored in this repository because of their size.
+- RGB camera images;
+- UR5e TCP poses;
+- relative translation actions;
+- relative rotation actions;
+- gripper commands and state;
+- natural-language instructions;
+- timing and episode metadata.
 
-### 4. Fine-tuning
+The operator should watch the UR5e rather than the UR7e while collecting demonstrations because the UR5e is the robot whose behavior is recorded and later reproduced.
 
-OpenVLA 7B was fine-tuned on the custom `ur5e_openvla` dataset using a LoRA/QLoRA-based workflow.
+Unsuccessful or visibly imprecise demonstrations should be removed before processing.
 
-The training process followed the general approach described in the official OpenVLA repository, with modifications for the local dataset and RTX 4000 Ada Generation workstation.
+See [`data_collection/`](data_collection/) for the collection order, start-position requirements, and example commands.
 
-The first full training run used approximately the following configuration:
+---
 
-| Setting                     | Value                |
-| --------------------------- | -------------------- |
-| Base model                  | `openvla/openvla-7b` |
-| Dataset                     | `ur5e_openvla`       |
-| LoRA rank                   | `8`                  |
-| Per-device batch size       | `1`                  |
-| Gradient accumulation steps | `16`                 |
-| Effective batch size        | `16`                 |
-| Learning rate               | `5e-4`               |
-| Image augmentation          | Disabled             |
-| Quantization                | Enabled              |
-| Maximum training steps      | `1000`               |
-| Checkpoint interval         | Every `250` steps    |
+## 4. Clean and Process the Demonstrations
 
-Model weights, adapter outputs, checkpoints, and generated datasets are intentionally excluded from version control.
+Data processing occurs in two stages.
 
-### 5. Fine-tuned evaluation
+### 4.1 Clean the Raw Episodes
 
-Fine-tuning on the first dataset has been completed.
+Use:
 
-The resulting model is currently being evaluated on the same UR5e setup. The goal is to compare its performance with the out-of-the-box baseline using controlled object positions, task instructions, and success criteria.
+```text
+data_processing/clean_raw_episodes.py
+```
+
+The script:
+
+- rejects invalid episodes;
+- removes unusable or low-information steps;
+- preserves context around meaningful actions;
+- recalculates translation and rotation actions between retained poses;
+- copies and reindexes the required images;
+- writes cleaned copies without changing the raw recordings.
+
+### 4.2 Convert Gripper Deltas to Absolute States
+
+Use:
+
+```text
+data_processing/convert_gripper_delta_to_absolute.py
+```
+
+The original collection workflow records delta-style gripper commands that indicate when the gripper changes state.
+
+The conversion script reconstructs and stores an absolute gripper target at every step:
+
+```text
+0 = open
+1 = closed
+```
+
+The processed action is:
+
+```text
+[
+    dx,
+    dy,
+    dz,
+    drx,
+    dry,
+    drz,
+    gripper_closed_target
+]
+```
+
+The first six dimensions remain relative. Only the gripper dimension is converted to an absolute target.
+
+The output of `convert_gripper_delta_to_absolute.py` is used as the input to the RLDS builder.
+
+See [`data_processing/`](data_processing/) for the complete workflow and validation guidance.
+
+---
+
+## 5. Convert the Processed Data to RLDS
+
+The RLDS conversion follows the workflow provided by the upstream [RLDS Dataset Builder](https://github.com/kpertsch/rlds_dataset_builder).
+
+### 5.1 Clone the Upstream Builder
+
+```bash
+git clone https://github.com/kpertsch/rlds_dataset_builder.git
+cd rlds_dataset_builder
+```
+
+Follow the upstream README to create the RLDS environment and verify that the example builder works.
+
+### 5.2 Rename the Example Dataset
+
+Follow step 1 of the upstream README:
+
+1. Rename `example_dataset/` to `ur5e_openvla/`.
+2. Rename:
+
+```text
+example_dataset_dataset_builder.py
+```
+
+to:
+
+```text
+ur5e_openvla_dataset_builder.py
+```
+
+### 5.3 Replace the Example Builder
+
+Replace the renamed example builder with the project-specific builder located in:
+
+```text
+rlds_dataset_builder/ur5e_openvla/
+```
+
+The provided builder already performs most of the dataset-specific work described in steps 2–4 of the upstream README, including:
+
+- defining the RLDS features;
+- configuring the dataset split;
+- reading the processed UR5e episodes;
+- implementing `_generate_examples()`;
+- packaging observations, actions, instructions, and metadata.
+
+Review the configured source-data path before building.
+
+### 5.4 Build the Dataset
+
+From the renamed builder directory, run:
+
+```bash
+tfds build --overwrite
+```
+
+Unless a different TensorFlow Datasets directory is configured, the output will be stored under:
+
+```text
+~/tensorflow_datasets/ur5e_openvla/
+```
+
+### 5.5 Validate the Dataset
+
+Use the upstream visualization tools to inspect the generated dataset.
+
+Validation should include:
+
+- viewing the beginning, middle, and end of selected episodes;
+- confirming that images represent the intended motion;
+- checking that language instructions match their episodes;
+- reviewing translation and rotation actions;
+- confirming that the raw RLDS gripper target uses `0=open, 1=closed`;
+- checking for unexpected values or missing fields.
+
+The builder in this repository does not replace the upstream instructions for:
+
+- environment creation;
+- running the example conversion;
+- building the dataset;
+- visualizing the output;
+- testing transforms;
+- optional dataset publishing.
+
+See [`rlds_dataset_builder/`](rlds_dataset_builder/) for project-specific instructions.
+
+---
+
+## 6. Register the RLDS Dataset with OpenVLA
+
+Creating the RLDS dataset does not automatically make it available to the OpenVLA data loader.
+
+OpenVLA requires a custom dataset to be registered in:
+
+```text
+prismatic/vla/datasets/rlds/oxe/configs.py
+prismatic/vla/datasets/rlds/oxe/transforms.py
+```
+
+This repository provides the working project versions in:
+
+```text
+openvla_dataset_registration/
+├── configs.py
+└── transforms.py
+```
+
+### `configs.py`
+
+The custom `ur5e_openvla` entry tells OpenVLA:
+
+- which RLDS field contains the primary image;
+- which fields contain the end-effector and gripper state;
+- how the state is arranged;
+- how the action is encoded.
+
+### `transforms.py`
+
+The custom transform standardizes the RLDS trajectory and converts the raw gripper action from:
+
+```text
+gripper_closed_target
+0 = open
+1 = closed
+```
+
+to OpenVLA’s expected action convention:
+
+```text
+gripper_open_target
+1 = open
+0 = closed
+```
+
+The conversion is:
+
+```python
+gripper_open_target = 1.0 - gripper_closed_target
+```
+
+Only the gripper action target is inverted. The first six action dimensions remain unchanged, and the observation gripper state remains `0=open, 1=closed`.
+
+### Merge Rather Than Overwrite
+
+OpenVLA may update its upstream `configs.py` and `transforms.py`.
+
+The recommended process is:
+
+1. Compare the files in `openvla_dataset_registration/` with the installed OpenVLA files.
+2. Merge the `ur5e_openvla` configuration and transform into the installed files.
+3. Preserve unrelated upstream registrations and fixes.
+4. Confirm that `ur5e_openvla` is present in both registries.
+
+See [`openvla_dataset_registration/`](openvla_dataset_registration/) for the exact fields and integration guidance.
+
+---
+
+## 7. Fine-Tune OpenVLA
+
+Follow the official OpenVLA **Fine-Tuning OpenVLA via LoRA** instructions before applying the project-specific settings.
+
+The custom dataset must already be:
+
+1. processed;
+2. converted to RLDS;
+3. built successfully;
+4. validated;
+5. registered in `configs.py`;
+6. registered in `transforms.py`.
+
+The fine-tuning command must use:
+
+```bash
+--dataset_name ur5e_openvla
+```
+
+The data root should point to the parent TensorFlow Datasets directory.
+
+For example, if the dataset is stored at:
+
+```text
+/home/user/tensorflow_datasets/ur5e_openvla/2.1.0/
+```
+
+use:
+
+```bash
+--data_root_dir /home/user/tensorflow_datasets
+--dataset_name ur5e_openvla
+```
+
+The project fine-tuning scripts support the local RTX 4000 Ada environment and include changes for:
+
+- LoRA or QLoRA;
+- 4-bit quantization;
+- gradient accumulation;
+- DDP and `torchrun`;
+- disabled W&B operation;
+- dataset-statistics saving;
+- merged-model checkpoint saving;
+- explicit checkpoint-step selection.
+
+A representative command is:
+
+```bash
+torchrun \
+  --standalone \
+  --nnodes 1 \
+  --nproc-per-node 1 \
+  /path/to/finetune_rtx4000_checkpoint_steps.py \
+  --vla_path openvla/openvla-7b \
+  --data_root_dir /path/to/tensorflow_datasets \
+  --dataset_name ur5e_openvla \
+  --run_root_dir /path/to/runs \
+  --adapter_tmp_dir /path/to/adapter-tmp \
+  --batch_size 1 \
+  --grad_accumulation_steps 8 \
+  --learning_rate 0.0001 \
+  --max_steps 7000 \
+  --checkpoint_steps 5000,7000 \
+  --save_latest_checkpoint_only False \
+  --use_lora True \
+  --lora_rank 32 \
+  --use_quantization True \
+  --image_aug True
+```
+
+Review the selected training script’s README and `--help` output before running.
+
+Model weights, adapters, checkpoints, generated datasets, and temporary merge files are excluded from version control.
+
+See [`training/`](training/) for the project fine-tuning scripts and commands.
+
+---
+
+## 8. Evaluate Fine-Tuned Checkpoints
+
+Fine-tuned checkpoints are evaluated using the same physical UR5e, camera position, action adapter, and task instruction used for the baseline tests.
+
+Current Phase 4 testing compares single-task models trained only on red-block-on-yellow-platform demonstrations.
+
+Checkpoint comparisons should use consistent:
+
+- robot starting poses;
+- camera placement;
+- object positions;
+- task instructions;
+- inference limits;
+- action scales;
+- gripper thresholds.
+
+Evaluation should track more than complete task success. Useful stage-level metrics include:
+
+- moves toward the correct object;
+- reaches the target vicinity;
+- aligns laterally;
+- reaches the correct depth;
+- achieves a usable wrist orientation;
+- closes at the correct time;
+- grasps the object;
+- holds the object;
+- moves toward the destination;
+- releases at the destination;
+- completes the full task.
+
+Offline action-prediction results should also be compared with physical robot performance. Better offline prediction does not necessarily produce better physical execution.
+
+See [`inference/`](inference/) and the evaluation documentation under [`docs/`](docs/).
+
+---
+
+## 9. Expand the Dataset and Retrain
+
+After the current checkpoint evaluation is complete, additional red-block demonstrations will be collected.
+
+New episodes should deliberately add variation in:
+
+- red-block position;
+- yellow-platform position;
+- object depth;
+- lateral placement;
+- block and platform orientation;
+- end-effector approach angle;
+- robot starting pose;
+- lighting;
+- camera conditions;
+- grasp and release timing.
+
+The expanded workflow will be:
+
+1. Collect additional demonstrations.
+2. Clean the new episodes.
+3. Convert gripper deltas to absolute states.
+4. Rebuild the RLDS dataset.
+5. Validate the expanded dataset.
+6. Fine-tune new models.
+7. Save selected checkpoints.
+8. Compare the new models with the current single-task models.
+
+---
+
+## Gripper Convention Summary
+
+The gripper representation changes at two points in the workflow.
+
+| Pipeline stage | Representation | Open | Closed |
+|---|---|---:|---:|
+| Data collection | Delta-style command | Command-dependent | Command-dependent |
+| Processed episodes | Absolute closed target | 0 | 1 |
+| Raw RLDS dataset | Absolute closed target | 0 | 1 |
+| OpenVLA model action | Absolute open target | 1 | 0 |
+
+The sequence is:
+
+```text
+Collected delta commands
+        ↓
+convert_gripper_delta_to_absolute.py
+        ↓
+Absolute closed target: 0=open, 1=closed
+        ↓
+RLDS conversion
+        ↓
+ur5e_openvla_dataset_transform
+        ↓
+Absolute open target: 1=open, 0=closed
+```
+
+This was implemented to match the absolute gripper convention used by OpenVLA during training and inference.
 
 ---
 
 ## Out-of-the-Box Results
 
-The current evaluation spreadsheets document **50 out-of-the-box trials**:
+The current evaluation records include 50 out-of-the-box trials:
 
-| Test mode                          | Trials | Steps per trial | Example instruction          |
-| ---------------------------------- | -----: | --------------: | ---------------------------- |
-| Translation only                   |     20 |              20 | “Move towards the red block” |
-| Translation and rotation           |     15 |              15 | “Move toward the red block”  |
-| Translation, rotation, and gripper |     15 |              15 | “Pick up the red block”      |
+| Test mode | Trials | Steps per trial | Example instruction |
+|---|---:|---:|---|
+| Translation only | 20 | 20 | “Move towards the red block” |
+| Translation and rotation | 15 | 15 | “Move toward the red block” |
+| Translation, rotation, and gripper | 15 | 15 | “Pick up the red block” |
 
 One camera image was saved for each inference step so the robot trajectory could be reviewed after testing.
 
-The trials have not yet been formally labeled as successes or failures, so success rates are not currently reported.
+Preliminary observations included:
 
-Preliminary observations include:
+- translation-only control sometimes moved in approximately the correct direction;
+- behavior became less predictable when rotation was enabled;
+- some trials ended with inverse-kinematics or path-sanity errors;
+- reliable grasping was not achieved out of the box;
+- some trajectories initially approached the target and later moved away;
+- the results supported workspace- and task-specific fine-tuning.
 
-* Translation-only control sometimes moved the robot in approximately the correct direction.
-* Behavior became substantially less predictable when rotation was enabled.
-* Some trials ended with inverse-kinematics or path-sanity errors.
-* Reliable grasping and complete pick-and-place behavior were not achieved out of the box.
-* In some trials, the robot initially approached the target and later moved away from it.
-* The baseline results supported the need for workspace- and task-specific fine-tuning.
+Formal task-level success labels have not yet been completed for every baseline trial.
 
-Detailed evaluation procedures and future trial-level results will be documented separately in `docs/evaluation.md`.
+---
+
+## Development Phases and Findings
+
+### Phase 1
+
+**Improvement:** The fine-tuned model navigated the workspace more effectively and could distinguish and approach objects.
+
+**Issue:** The initial dataset stored sparse gripper deltas, so fewer than one percent of actions contained a gripper change. The model rarely produced usable gripper commands.
+
+**Response:** The episodes were reprocessed so the gripper was represented as an absolute state at every step.
+
+### Phase 2
+
+**Improvements:**
+
+- The model began closing the gripper near grasping targets.
+- Move-to-object behavior remained stronger than the base model.
+- The robot sometimes centered over blocks before grasping.
+
+**Issues:**
+
+- Some models produced unstable actions immediately after closing.
+- Objects with similar colors were sometimes confused.
+- Some image regions produced more stalling or confusion.
+
+**Response:** Additional checkpoints were trained and compared to investigate whether the dataset had been overtrained.
+
+### Phase 3
+
+**Improvements:**
+
+- Individual checkpoints could be evaluated.
+- A stale-camera-frame issue in live inference was identified and corrected.
+- The gripper action convention was aligned with OpenVLA’s absolute open-target convention.
+
+**Issues:**
+
+- Storage limitations prevented some later checkpoints from being retained.
+- Higher-step models sometimes produced more near-zero movement around grasping transitions.
+- Better offline action prediction did not always result in better physical task execution.
+
+**Response:** Training and evaluation were narrowed to a single task so that checkpoint behavior could be compared without interference from unrelated task groups.
+
+### Phase 4
+
+The current phase focuses on determining how training duration affects performance on a single task.
+
+A new dataset was created using only demonstrations for:
+
+```text
+Place the red block on the yellow platform.
+```
+
+Models are being saved and evaluated at specified optimizer checkpoints rather than testing only the final model. This allows the project to compare how spatial control, gripper timing, grasping behavior, and task completion change as training progresses.
+
+**Current work:**
+
+- Test single-task models at selected checkpoints.
+- Compare checkpoint behavior using consistent robot starting poses, camera placement, object positions, instructions, and step limits.
+- Evaluate approach direction, depth, lateral alignment, end-effector orientation, gripper timing, grasp success, and complete task success.
+- Compare physical performance with offline action-prediction results.
+- Identify whether performance improves, plateaus, or declines at higher training steps.
+
+Early single-task testing suggests that removing unrelated tasks may reduce some unstable behavior, but depth perception and end-effector orientation remain important limitations.
+
+**Next step:** After the current checkpoints are evaluated, additional red-block demonstrations will be collected with greater variation in object position, depth, orientation, starting pose, and workspace conditions. New models will then be trained on the expanded dataset and compared with the current single-task checkpoints.
 
 ---
 
 ## Installation Overview
 
-This repository assumes a general understanding of:
+This repository assumes familiarity with:
 
-* Python and Linux
-* Universal Robots
-* UR-RTDE
-* OpenVLA
-* TensorFlow Datasets and RLDS
-* GPU-based model inference and training
+- Python and Linux;
+- Universal Robots;
+- UR-RTDE;
+- OpenVLA;
+- TensorFlow and TensorFlow Datasets;
+- RLDS;
+- PyTorch;
+- GPU-based inference and training.
 
-It does not replace the official setup instructions for its major dependencies.
+It does not replace the official installation instructions for its major dependencies.
 
-### OpenVLA
+### Primary External Projects
 
-Follow the installation and environment setup instructions in the official [OpenVLA repository](https://github.com/openvla/openvla).
+- [OpenVLA](https://github.com/openvla/openvla)
+- [RLDS Dataset Builder](https://github.com/kpertsch/rlds_dataset_builder)
+- [UR-RTDE](https://sdurobotics.gitlab.io/ur_rtde/)
+- [TensorFlow Datasets](https://www.tensorflow.org/datasets)
+- [SimplerEnv-OpenVLA](https://github.com/DelinQu/SimplerEnv-OpenVLA)
 
-OpenVLA should be installed and tested independently before it is connected to a physical robot.
-
-### RLDS dataset builder
-
-The custom dataset conversion workflow follows the structure described in the [`rlds_dataset_builder`](https://github.com/kpertsch/rlds_dataset_builder) repository.
-
-### Robot and camera dependencies
+### Additional Dependencies
 
 The project also requires:
 
-* `ur_rtde`
-* Intel RealSense software and Python bindings
-* Robotiq Hand-E communication support
-* TensorFlow
-* TensorFlow Datasets
-* PyTorch and the OpenVLA dependencies
+- Intel RealSense software and Python bindings;
+- Robotiq Hand-E communication support;
+- TensorFlow;
+- TensorFlow Datasets;
+- PyTorch;
+- the OpenVLA Python dependencies.
 
-Exact tested versions will be added after the lab workstation configuration is verified.
-
-| Dependency          | Version |
-| ------------------- | ------- |
-| Ubuntu              | `TBD`   |
-| Python              | `TBD`   |
-| CUDA                | `TBD`   |
-| PyTorch             | `TBD`   |
-| Transformers        | `TBD`   |
-| TensorFlow          | `TBD`   |
-| TensorFlow Datasets | `TBD`   |
-| `ur_rtde`           | `TBD`   |
-| RealSense SDK       | `TBD`   |
-
-Detailed installation and execution instructions will be provided in the relevant subdirectory READMEs.
+Exact tested versions should be documented after the lab environment is finalized.
 
 ---
 
@@ -382,86 +843,59 @@ Detailed installation and execution instructions will be provided in the relevan
 
 > **Warning:** This project controls physical industrial robot arms. Incorrect commands can cause collisions, equipment damage, or personal injury.
 
-The software is a research prototype and is not intended for unattended or production use.
+The software is a research prototype and is not intended for unattended or production operation.
 
 Recommended precautions include:
 
-* Keep the emergency stop accessible.
-* Maintain a clear workspace.
-* Keep personnel outside the robot’s reachable area during autonomous motion.
-* Begin with low speeds and conservative action limits.
-* Test translation, rotation, and gripper behavior separately.
-* Prefer single-step execution before enabling repeated inference.
-* Stop testing immediately when movement becomes unstable or unexpected.
-* Review the cause of protective stops before continuing.
-* Keep someone actively monitoring the robot during execution.
+- keep the emergency stop accessible;
+- maintain a clear workspace;
+- keep personnel outside the robot’s reachable area during autonomous motion;
+- begin with low speeds and conservative action limits;
+- test translation, rotation, and gripper behavior separately;
+- prefer single-step execution before repeated inference;
+- stop testing when movement becomes unstable or unexpected;
+- investigate protective stops before continuing;
+- keep a trained operator actively monitoring the robot.
 
-OpenVLA may generate unsafe or nonsensical actions, especially when the physical environment differs from its training data.
+OpenVLA may generate unsafe or nonsensical actions, particularly when the physical environment differs from its training data.
 
 ---
 
 ## Current Limitations
 
-* The project is still under active development.
-* Fine-tuned evaluation is not yet complete.
-* The custom dataset is relatively small and specific to one lab setup.
-* The model is sensitive to camera position, object placement, and workspace appearance.
-* The OOTB trials have not yet been assigned formal success labels.
-* Some configuration values remain embedded in local scripts.
-* Full reproduction requires compatible robot arms, a gripper, a camera, and a sufficiently capable GPU.
-* Raw demonstrations, generated datasets, and model weights are not included in the repository.
-* The system has not been validated for unattended operation.
+- The project remains under active development.
+- Single-task checkpoint evaluation is not complete.
+- The custom dataset is relatively small and specific to one lab setup.
+- Performance is sensitive to camera placement, object position, and workspace appearance.
+- Depth estimation and end-effector orientation remain difficult.
+- Better offline action prediction does not always result in better physical behavior.
+- Some configuration values remain embedded in local scripts.
+- Full reproduction requires compatible robots, a gripper, a camera, and a capable GPU.
+- Raw demonstrations, generated datasets, and model weights are not included.
+- The system has not been validated for unattended operation.
 
 ---
 
-## Model Phases, Hurdles, and Dev Process
-* Phase 1
-
-| Improvements          | Shortcomings |
-| ----- | ------- |
-| The model navigated space much more effectively. It could distnguish objects and move toward them well. | The gripper did not work. In our initial finetuning episodes, we recorded gripper actions as a delta. This resulted in <1% of actions including a gripper change. After testing, we found this caused the model to never send gripper actions. To fix this, we had to re-clean the dataset and replace the gripper delta with a binary representing absolute gripper state (0 - open, 1 - closed)  |
-
-Action to improve: We re-fine-tuned the model with the cleaned dataset.
-
-* Phase 2
-  
-| Improvements | Shortcomings |
-| ------------------- | ------- |
-| The model can use its gripper now. It closes when around the grasping target consistently. | The model broke down once the gripper action completed. For whatever reason, OpenVLA inference outputs essentially random values in frames just after the gripper closes around an object. |
-| The ability to move in space remains, and 'move to' commands work well. | The model mixes up objects of the same color. |
-| The model was able to center on blocks as grasping objects somewhat often. | There is a dead zone of objects in the top left of the camera image that increases the chance of the model becoming confused and stalling |
-
-Action to improve: We will test a new model that trains on fewer iterations (Phase 2 trained on our dataset ~7 times, which may have been too much). We will save training checkpoints and test each one to see the path of imporvement and find where the model peaks and where errors come up.
-
-* Phase 3
-
-| Improvements | Shortcomings |
-| ------------------- | ------- |
-| We can test individual model checkpoints. | We ran out of storage during training, meaning only early checkpoints saved. |
-| We found a bug in the live test script where the inference would be run on an earlier frame rather than the current one. | The early checkpoints did not work well. |
-| We aligned the absolute gripper convention with OpenVLA pretraining to make fine tuning better (0 = closed, 1 = open) | We found that as training steps increased, the model got closer to episode ground-truth actions (was better at predicting gripper action and spatial reasoning) but also was more likely to stall with near-zero movements around grasping time. |
-
-Action to improve: We will retrain and save fewer checkpoints while also clearing storage so that we can actually get a full model to test. It might be worth considering cleaning data with near-zero movements around gripper activation time. The main priority is getting good tests with a model that has enough training time.
-
-
-
----
 ## Future Work
 
-Planned next steps include:
+Planned work includes:
 
-* Complete the post-fine-tuning evaluation
-* Define consistent success criteria for every task
-* Review and formally label the OOTB trials
-* Compare OOTB and fine-tuned success rates
-* Investigate failures during grasping and placement
-* Improve rotation handling
-* Evaluate different inference frequencies and action scales
-* Collect additional demonstrations for weak tasks
-* Move hardware and model settings into configuration files
-* Add tests for action conversion and gripper mapping
-* Add architecture diagrams and demonstration media
-* Document the final software environment
+- complete standardized testing of the current single-task checkpoints;
+- compare performance across the selected training steps;
+- identify the checkpoint with the best balance of movement, orientation, gripper timing, and task completion;
+- collect additional red-block episodes based on observed failure modes;
+- increase variation in object position, depth, orientation, robot starting pose, lighting, and camera conditions;
+- rebuild the RLDS dataset using the expanded demonstrations;
+- train new models on the expanded dataset and compare them with the current checkpoints;
+- define consistent success criteria for each task stage;
+- formally label baseline and fine-tuned trials;
+- compare single-task and mixed-task datasets;
+- investigate near-zero actions around grasping transitions;
+- improve rotation and depth handling;
+- evaluate different inference frequencies and action scales;
+- add automated checks for action conversion and gripper mapping;
+- move remaining local settings into configuration files;
+- document the final tested software environment.
 
 ---
 
@@ -473,35 +907,36 @@ This project was completed by undergraduate robotics research interns **Alex Osp
 
 Primary contributions include:
 
-* Setting up OpenVLA and its inference environment using the official OpenVLA instructions
-* Connecting live camera input to OpenVLA
-* Connecting OpenVLA inference to the UR5e through `ur_rtde`
-* Adapting an OpenVLA inference wrapper from [SimplerEnv-OpenVLA](https://github.com/DelinQu/SimplerEnv-OpenVLA)
-* Developing and testing the UR5e action-adaptation pipeline
-* Evaluating out-of-the-box OpenVLA behavior
-* Developing the UR7e-to-UR5e relative motion-mirroring workflow
-* Integrating keyboard control of the Hand-E gripper during data collection
-* Collecting and cleaning demonstration episodes
-* Converting demonstrations using the RLDS dataset-builder workflow
-* Modifying the fine-tuning process for the local RTX 4000 workstation
-* Fine-tuning OpenVLA on the custom `ur5e_openvla` dataset
+- setting up OpenVLA and its inference environment;
+- connecting live camera input to OpenVLA;
+- connecting OpenVLA inference to the UR5e through `ur_rtde`;
+- adapting an inference wrapper from SimplerEnv-OpenVLA;
+- developing and testing the UR5e action-adaptation pipeline;
+- evaluating out-of-the-box behavior;
+- developing the UR7e-to-UR5e relative motion-mirroring workflow;
+- integrating Hand-E keyboard control during collection;
+- collecting and cleaning demonstrations;
+- implementing the RLDS conversion workflow;
+- registering the custom dataset with OpenVLA;
+- adapting fine-tuning for the local RTX 4000 workstation;
+- fine-tuning OpenVLA on `ur5e_openvla`.
 
 ### Logan Rahner
 
 Primary contributions include:
 
-* Assisting with out-of-the-box testing
-* Collecting demonstrations
-* Reviewing and cleaning recorded episodes
-* Logging robot and model behavior
-* Evaluating experimental performance
-* Setting up the OpenVLA environment after fine-tuning
-* Helping to connect and calibrate UR5e through `ur_rtde`
-* Proofreading code and performing sanity-checks
-* Configuring UR5e and UR7e start positions and quick-reset programs for episode collection
-* Designed training tasks
-* Contributed to the data cleaning script and fine-tuning script for Phase 2.
-* Lead the current post-fine-tuning testing and evaluation work.
+- assisting with out-of-the-box testing;
+- collecting demonstrations;
+- reviewing and cleaning episodes;
+- logging robot and model behavior;
+- evaluating experimental performance;
+- setting up the post-fine-tuning OpenVLA environment;
+- helping connect and calibrate the UR5e through `ur_rtde`;
+- proofreading code and performing sanity checks;
+- configuring UR5e and UR7e starting positions and reset programs;
+- designing training tasks;
+- contributing to data-cleaning and fine-tuning scripts;
+- leading current post-fine-tuning testing and evaluation.
 
 Both researchers worked together during physical demonstration collection, robot testing, troubleshooting, and evaluation.
 
@@ -513,12 +948,12 @@ This work was completed at **Longlab, Atlantic Technological University Galway**
 
 The project builds on:
 
-* [OpenVLA](https://github.com/openvla/openvla)
-* [OpenVLA: An Open-Source Vision-Language-Action Model](https://arxiv.org/abs/2406.09246)
-* [SimplerEnv-OpenVLA](https://github.com/DelinQu/SimplerEnv-OpenVLA)
-* [RLDS Dataset Builder](https://github.com/kpertsch/rlds_dataset_builder)
-* [UR-RTDE](https://sdurobotics.gitlab.io/ur_rtde/)
-* [TensorFlow Datasets](https://www.tensorflow.org/datasets)
+- [OpenVLA](https://github.com/openvla/openvla)
+- [OpenVLA: An Open-Source Vision-Language-Action Model](https://arxiv.org/abs/2406.09246)
+- [SimplerEnv-OpenVLA](https://github.com/DelinQu/SimplerEnv-OpenVLA)
+- [RLDS Dataset Builder](https://github.com/kpertsch/rlds_dataset_builder)
+- [UR-RTDE](https://sdurobotics.gitlab.io/ur_rtde/)
+- [TensorFlow Datasets](https://www.tensorflow.org/datasets)
 
 ---
 
