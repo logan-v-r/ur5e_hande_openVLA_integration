@@ -1,75 +1,177 @@
 # Data Processing
 
-This directory contains the script used to clean raw UR5e demonstration episodes before TFDS/RLDS conversion.
+This directory contains the scripts used to clean and standardize recorded UR5e demonstration episodes before converting them into the custom `ur5e_openvla` RLDS dataset.
 
-## Contents
+## Processing Workflow
 
-| File                    | Purpose                                                                                         |
-| ----------------------- | ----------------------------------------------------------------------------------------------- |
-| `clean_raw_episodes.py` | Applies automated quality checks and creates cleaned copies of retained demonstration episodes. |
+```text
+Raw demonstration episodes
+        ↓
+clean_raw_episodes.py
+        ↓
+Cleaned episodes with relative robot actions
+and delta-style gripper commands
+        ↓
+convert_gripper_delta_to_absolute.py
+        ↓
+Processed episodes with relative robot actions
+and absolute gripper states
+        ↓
+rlds_dataset_builder/ur5e_openvla/
+        ↓
+ur5e_openvla RLDS dataset
+        ↓
+openvla_dataset_registration/
+        ↓
+OpenVLA fine-tuning
+```
 
-## How It Works
+The translation and rotation action dimensions remain relative throughout this process. Only the gripper channel is converted from a delta command to an absolute state.
 
-`clean_raw_episodes.py` is run after unsuccessful or inaccurate demonstrations have been removed through manual review.
+## Files
+
+### `clean_raw_episodes.py`
+
+Cleans retained demonstration episodes and prepares them for RLDS conversion.
 
 The script:
 
-* Skips incomplete episodes by default
-* Removes steps with invalid camera, TCP, safety, image, or timing data
-* Removes long stretches of little or no arm movement
-* Treats gripper changes as meaningful actions when gripper data is available
-* Preserves a small amount of idle context around meaningful actions
-* Recalculates actions between retained UR5e poses
-* Reindexes retained steps and images
-* Adds a terminal action to the final retained observation by default
-* Writes a cleaning summary to `cleaning_manifest.jsonl`
+* removes invalid or unusable steps;
+* removes extended periods with little or no robot movement;
+* preserves context around meaningful movement and gripper events;
+* recalculates translation and rotation actions between retained poses;
+* copies and reindexes the corresponding images;
+* writes cleaned episodes to a separate output directory.
 
-The original raw episodes are not modified. Cleaned episodes are written to a separate output directory and marked as `cleaned_unreviewed`.
-
-## Input and Output
-
-The expected input is the raw episode structure produced by [`collect_data_gripper.py`](../data_collection/collect_data_gripper.py):
+At this stage, the first six action dimensions represent relative end-effector movement:
 
 ```text
-episode_.../
-├── episode_metadata.json
-├── steps.jsonl
-├── images/
-└── COMPLETE.json
+[dx, dy, dz, drx, dry, drz]
 ```
 
-The cleaned output preserves the same episode-level structure and also adds cleaning information to the metadata. The output root contains a `cleaning_manifest.jsonl` file summarizing which episodes were cleaned, skipped, or encountered errors.
+The gripper channel may still contain delta-style commands that indicate when the gripper should change state.
 
-## Workflow
+### `convert_gripper_delta_to_absolute.py`
+
+Converts the cleaned gripper delta commands into an absolute gripper state at every step.
+
+Instead of retaining only isolated open or close commands, the script tracks the current gripper state and carries it forward through the episode.
+
+The converted data uses:
 
 ```text
-Raw episodes from `collect_data_gripper.py`
-                  ↓
-       Manual task-success review
-                  ↓
-        `clean_raw_episodes.py`
-                  ↓
-         Cleaned episode folders
-                  ↓
-          TFDS/RLDS conversion
+0 = open
+1 = closed
 ```
 
-The generated datasets and episode images are not committed to this repository because of their size.
+The resulting seven-dimensional action is:
+
+```text
+[
+    dx,
+    dy,
+    dz,
+    drx,
+    dry,
+    drz,
+    gripper_closed_target
+]
+```
+
+The first six values remain relative robot actions. The final value is an absolute gripper target.
+
+The output of this script should be used as the source data for the `ur5e_openvla` RLDS builder.
+
+## OpenVLA Gripper Convention
+
+The processed episodes and raw RLDS dataset store the gripper as an absolute closed-target value:
+
+```text
+0 = open
+1 = closed
+```
+
+OpenVLA expects the model action to use an absolute open-target convention:
+
+```text
+1 = open
+0 = closed
+```
+
+That final conversion does not occur in this directory. It is handled by the custom OpenVLA dataset transform documented in:
+
+```text
+openvla_dataset_registration/
+```
+
+The registered `ur5e_openvla_dataset_transform` converts:
+
+```python
+gripper_open_target = 1.0 - gripper_closed_target
+```
+
+Only the gripper action target is inverted. The first six relative action dimensions pass through unchanged, and the observed physical gripper state remains `0=open, 1=closed`.
+
+The complete gripper workflow is:
+
+```text
+Collected delta-style gripper commands
+        ↓
+convert_gripper_delta_to_absolute.py
+        ↓
+Absolute closed target:
+0 = open, 1 = closed
+        ↓
+RLDS dataset builder
+        ↓
+ur5e_openvla_dataset_transform
+        ↓
+OpenVLA absolute open target:
+1 = open, 0 = closed
+```
+
+## Running the Scripts
+
+Review the supported command-line arguments before processing data:
+
+```bash
+python data_processing/clean_raw_episodes.py --help
+python data_processing/convert_gripper_delta_to_absolute.py --help
+```
+
+Run `clean_raw_episodes.py` first, followed by `convert_gripper_delta_to_absolute.py`.
+
+Use the converter’s output directory as the input source configured in:
+
+```text
+rlds_dataset_builder/ur5e_openvla/ur5e_openvla_dataset_builder.py
+```
 
 ## Validation
 
-After cleaning, the episodes should be checked before dataset conversion to confirm that:
+Before building the RLDS dataset, confirm that:
 
-* The expected number of episodes was retained
-* Images are present and correctly ordered
-* Robot movement is represented accurately
-* Gripper actions occur at the expected times
-* Language instructions remain associated with the correct episodes
+* all retained steps reference valid images;
+* translation and rotation actions reflect the intended robot movement;
+* every step contains an absolute gripper value;
+* the gripper remains open before the grasp;
+* the gripper remains closed while carrying the object;
+* the gripper returns to open at release;
+* language instructions and episode metadata remain associated with the correct episodes.
 
-The resulting dataset is later inspected using `visualize_dataset.py` from the [`rlds_dataset_builder`](https://github.com/kpertsch/rlds_dataset_builder) project.
+After RLDS conversion and OpenVLA registration, verify that the final model action uses:
+
+```text
+1 = open
+0 = closed
+```
 
 ## Related Directories
 
-* [`data_collection/`](../data_collection/) — records raw robot demonstrations
-* [`rlds_dataset_builder/`](../rlds_dataset_builder/) — converts cleaned episodes into TFDS/RLDS format
-* [`training/`](../training/) — fine-tunes OpenVLA on the generated dataset
+* `data_collection/` records raw UR5e demonstrations.
+* `data_processing/` cleans episodes and converts gripper deltas to absolute states.
+* `rlds_dataset_builder/ur5e_openvla/` converts the processed episodes into RLDS format.
+* `openvla_dataset_registration/` registers and standardizes the RLDS dataset for OpenVLA.
+* The fine-tuning scripts load the dataset using `--dataset_name ur5e_openvla`.
+
+Raw episodes, processed datasets, and generated RLDS files are not stored in this repository because of their size.
