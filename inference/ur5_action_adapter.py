@@ -70,12 +70,12 @@ ROTATION_AXIS_MASK = np.array([1.0, 1.0, 1.0], dtype=np.float64)
 USE_GRIPPER = True
 
 # Absolute gripper target threshold. The custom dataset stores:
-#   0.0 -> open
-#   1.0 -> closed
-# Predictions at or above this threshold command close; predictions below it
-# command open.
-GRIPPER_OPEN_THRESHOLD = 0.30
-GRIPPER_CLOSED_THRESHOLD = 0.70
+#   1.0 -> open
+#   0.0 -> closed
+# Predictions at or above this threshold command open; predictions below it
+# command close.
+GRIPPER_OPEN_THRESHOLD = 0.70
+GRIPPER_CLOSED_THRESHOLD = 0.30
 
 # ---------------------------------------------------------------------------
 # Rotation helper functions
@@ -231,14 +231,14 @@ def openvla_to_gripper_command(
 
     The fine-tuned model predicts an absolute gripper target:
 
-        0.0 = open
-        1.0 = closed
+        1.0 = open
+        0.0 = closed
 
     A deadband prevents uncertain middle-range predictions from repeatedly
     switching the physical gripper:
 
-        target <= GRIPPER_OPEN_THRESHOLD   -> "open"
-        target >= GRIPPER_CLOSED_THRESHOLD -> "close"
+        target >= GRIPPER_OPEN_THRESHOLD   -> "open"
+        target <= GRIPPER_CLOSED_THRESHOLD -> "close"
         otherwise                          -> None
 
     Returning ``None`` leaves the gripper in its current physical state.
@@ -247,16 +247,16 @@ def openvla_to_gripper_command(
     if not USE_GRIPPER:
         return None
 
-    gripper_closed_target = _require_vector(
+    gripper_open_target = _require_vector(
         openvla_action,
         "gripper",
         1,
     )[0]
 
-    if gripper_closed_target <= GRIPPER_OPEN_THRESHOLD:
+    if gripper_open_target >= GRIPPER_OPEN_THRESHOLD:
         return "open"
 
-    if gripper_closed_target >= GRIPPER_CLOSED_THRESHOLD:
+    if gripper_open_target <= GRIPPER_CLOSED_THRESHOLD:
         return "close"
 
     return None
