@@ -806,12 +806,6 @@ Response: Now that the full-episode action has been replicated, we know the pipe
 
 **Response:** For further improvements to be made, a more robust, high-quality dataset must be curated. We recommend trials with close-up camera angles, varied object positions, consistent lighting, and high-contrast objects. 20 trials seems to be a good minimum to see meaningful results, but the more data the better. Be mindful of overtraining and ensure to test checkpoints to find the optimal number of steps for your size of dataset.
 
-```text
-Place the red block on the yellow platform.
-```
-
-Models are being saved and evaluated at specified optimizer checkpoints rather than testing only the final model. This allows the project to compare how spatial control, gripper timing, grasping behavior, and task completion change as training progresses.
-
 **Results and Conclusion:**
 
 Throughout our testing, we have pinpointed multiple points of failure, important conditions for success, and ways to optimize the performance of a fine-tuned OpenVLA model on a UR5e. We have progressed from an out-of-the-box model that could not move in 3D space whatsoever to a model that can successfully perform pick and place tasks, although it is still inconsistent. Here are the takeaways from our setup and 5 phases of testing:
