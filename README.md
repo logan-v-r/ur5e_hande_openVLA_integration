@@ -777,9 +777,34 @@ Formal task-level success labels have not yet been completed for every baseline 
 
 ### Phase 4
 
-The current phase focuses on determining how training duration affects performance on a single task.
+**Improvements:**
 
-A new dataset was created using only demonstrations for:
+- We found that this method of training fixed the issue with the model stalling after gripper action.
+- A single complete successful pick-and-place task was recorded.
+- We found that on a dataset size of ~30 episodes, a 3000-step model was ideal.
+
+**Issues:**
+
+- The model remained inconsistent in centering ability and could not consistently grasp its target.
+- The model struggled to perceive depth and precise 3D space even after the fine-tuning.
+- When undertrained, the model acted nonsensically. When overtrained, it seemed to favor early-episode actions and rarely was able to approach the block.
+
+Response: Now that the full-episode action has been replicated, we know the pipeline works. To fix the depth perception and fine control in 3D space issue, we will retrain on a new dataset where the camera angle is much closer to the workspace.
+
+### Phase 5
+
+**Improvements:**
+
+- The model was able to reproduce a successful trial on the first try when given an easy-difficulty setup.
+- The model's demonstration of the episode action is very good. It approaches, picks, moves, and places in the correct order.
+- The model had improved control in 3D space. 
+
+**Issues:**
+
+- The new dataset was only 24 episodes, meaning the model lacked data variance and struggled to adapt and replicate harder tasks (eg. tasks that required tool rotation).
+- The model still struggled to approach and grasp the object, often barely missing or stopping just above. We diagnose this as a lack of episode quantity in this specific case.
+
+**Response:** For further improvements to be made, a more robust, high-quality dataset must be curated. We recommend trials with close-up camera angles, varied object positions, consistent lighting, and high-contrast objects. 20 trials seems to be a good minimum to see meaningful results, but the more data the better. Be mindful of overtraining and ensure to test checkpoints to find the optimal number of steps for your size of dataset.
 
 ```text
 Place the red block on the yellow platform.
@@ -787,17 +812,26 @@ Place the red block on the yellow platform.
 
 Models are being saved and evaluated at specified optimizer checkpoints rather than testing only the final model. This allows the project to compare how spatial control, gripper timing, grasping behavior, and task completion change as training progresses.
 
-**Current work:**
+**Results and Conclusion:**
 
-- Test single-task models at selected checkpoints.
-- Compare checkpoint behavior using consistent robot starting poses, camera placement, object positions, instructions, and step limits.
-- Evaluate approach direction, depth, lateral alignment, end-effector orientation, gripper timing, grasp success, and complete task success.
-- Compare physical performance with offline action-prediction results.
-- Identify whether performance improves, plateaus, or declines at higher training steps.
+Throughout our testing, we have pinpointed multiple points of failure, important conditions for success, and ways to optimize the performance of a fine-tuned OpenVLA model on a UR5e. We have progressed from an out-of-the-box model that could not move in 3D space whatsoever to a model that can successfully perform pick and place tasks, although it is still inconsistent. Here are the takeaways from our setup and 5 phases of testing:
 
-Early single-task testing suggests that removing unrelated tasks may reduce some unstable behavior, but depth perception and end-effector orientation remain important limitations.
+* Everything about your setup matters for the model's in-distribution consistency
+    - Lighting, background, distractor objects, camera position, and anything else about your setup that differs from training data will affect performance. Some matter more than others, but for in-distribution tests, all effort should be made to keep your setup the same as it was during data collection.
 
-**Next step:** After the current checkpoints are evaluated, additional red-block demonstrations will be collected with greater variation in object position, depth, orientation, starting pose, and workspace conditions. New models will then be trained on the expanded dataset and compared with the current single-task checkpoints.
+* Training length matters. Overtraining and undertraining is a risk.
+    - We recommend saving various checkpoints and testing all of them to figure out which training length is best for your length of dataset.
+
+* Notes about convention and data collection
+    - Follow our conventions for rotation and gripper, as we believe they match OpenVLA's pretraining the best. Use absolute gripper condition in your data collection, and triple-check your data before, during, and after cleaning and conversion. Especially regarding gripper data, since special settings and extra conversion may be needed if you use our pipeline.
+ 
+* Data quality is everything
+    - The more episodes, the merrier.
+    - Close camera angles help the single-camera perspective achieve depth-perception faster.
+    - Cleaning near-zero action, stalls, and anomalies around gripper-time are important for inference quality.
+
+
+**For Further Investigation:** For anyone looking to further build on our work or use our pipeline should do their best to curate a large and high-quality dataset, following the optimizations we discovered to hopefully achieve even better performance for OpenVLA on a UR5e.
 
 ---
 
